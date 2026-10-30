@@ -1,5 +1,5 @@
 // 浪漫カメラ：動画を変換する（端末の中だけ）。読む→1コマずつ見た目を付ける→H.264で書き出し。音声（AAC）はそのまま写す。
-// ロゴと日時のグリッチは4コマごとに崩れ方が変わり、1.2〜2秒に一度2〜3コマ大きく乱れる（look_reference_video.py と同じ）。
+// ロゴと日時のグリッチは4コマごとに崩れ方が変わり、2〜3.5秒に一度2コマ大きく乱れる（look_reference_video.py と同じ）。
 import { demux, mux, Reader } from './mp4.js';
 import { osdLines, rng } from './look.js';
 
@@ -22,13 +22,13 @@ async function pickEncoder(fps, sec) {   // 60秒を超える動画はメモリ�
 }
 
 function burstFrames(n, fps) {
-  const r = rng(5), out = new Set(); let t = 0.6 + r() * 0.6;
-  while (t * fps < n) { const s = Math.floor(t * fps), k = 2 + Math.floor(r() * 2); for (let i = 0; i < k; i++) out.add(s + i); t += 1.2 + r() * 0.8; }
+  const r = rng(5), out = new Set(); let t = 0.8 + r() * 0.8;   // v6：2〜3.5秒に一度・2コマ（v5＝1.2〜2秒・2〜3コマ）
+  while (t * fps < n) { const s = Math.floor(t * fps); out.add(s); out.add(s + 1); t += 2.0 + r() * 1.5; }
   return out;
 }
 
-/** file を変換して Blob（video/mp4）を返す。probe＝probeVideo() の結果、date＝右上に出す日時 */
-export async function convertVideo(file, look, overlay, { probe, date, onProgress, signal }) {
+/** file を変換して Blob（video/mp4）を返す。probe＝probeVideo() の結果、date＝右上に出す日時、mode＝'vhs'|'dot'|'tv' */
+export async function convertVideo(file, look, overlay, { probe, date, mode = 'vhs', onProgress, signal }) {
   const { m, fps, duration } = probe || await probeVideo(file), v = m.video, S = v.samples;
   const dcfg = { codec: v.codec, codedWidth: v.width, codedHeight: v.height, description: v.description };
   let ok = false; try { ok = (await VideoDecoder.isConfigSupported(dcfg)).supported; } catch (e) { /* 下で */ }
@@ -37,7 +37,8 @@ export async function convertVideo(file, look, overlay, { probe, date, onProgres
   const pts = i => (S.cts[i] - v.mediaStart) / v.ts + v.emptySec;   // 表示時刻（秒）
   const total = S.n, kf = Math.max(1, Math.round(fps * 2)), bursts = burstFrames(total + 8, fps), lines = osdLines(date);
   const frameUs = Math.round(1e6 / fps);
-  let err = null, first = null, idx = 0, avcC = null; const chunks = [];
+  let err = null, first = null, idx = 0, avcC = null, hdr; const chunks = [];
+  const fixed = mode === 'dot' ? overlay.dotCard(date) : mode === 'tv' ? overlay.tvLayer(date) : null, dot = {};   // ドット絵とテレビの重ね絵は全コマ同じ
 
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {
@@ -53,9 +54,10 @@ export async function convertVideo(file, look, overlay, { probe, date, onProgres
       try {
         if (err || frame.timestamp < -1) return;
         if (first === null) first = frame.timestamp;
+        if (hdr === undefined) { const tr = frame.colorSpace && frame.colorSpace.transfer; hdr = v.hdr && tr !== 'hlg' && tr !== 'pq' ? v.hdr : null; }   // ブラウザが HDR のまま渡してきたら自分で直す
         const i = idx++, seed = 1000 + Math.floor(i / 4), burst = bursts.has(i);
-        const ov = overlay.get(lines, burst ? seed * 7 + i : seed, burst);
-        look.render(frame, frame.displayWidth, frame.displayHeight, v.rot, { seed: 77 + i, jitter: true, overlay: ov });
+        const ov = fixed || overlay.get(lines, burst ? seed * 7 + i : seed, burst);
+        look.render(frame, frame.displayWidth, frame.displayHeight, v.rot, { mode, seed: 77 + i, jitter: true, overlay: ov, hdr, dot });
         const out = new VideoFrame(look.canvas, { timestamp: frame.timestamp - first, duration: frameUs });
         encoder.encode(out, { keyFrame: i % kf === 0 }); out.close();
         if (onProgress) onProgress(Math.min(1, idx / total));

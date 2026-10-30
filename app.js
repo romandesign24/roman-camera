@@ -3,7 +3,7 @@ import { Look, Overlay, osdLines } from './look.js';
 import { photoDate } from './exif.js';
 import { probeVideo, convertVideo, canConvertVideo } from './video.js';
 
-export const VERSION = 'v1 (2026-10-30)';
+export const VERSION = 'v2 (2026-10-30)';
 const MAX_SEC = 180;
 const $ = id => document.getElementById(id);
 const ui = { file: $('file'), work: $('work'), img: $('outImg'), vid: $('outVid'), busy: $('busy'), busyText: $('busyText'), busySub: $('busySub'),
@@ -11,7 +11,11 @@ const ui = { file: $('file'), work: $('work'), img: $('outImg'), vid: $('outVid'
 $('ver').textContent = VERSION;
 
 let look = null, overlay = null;
-const st = { kind: null, file: null, img: null, probe: null, date: null, seed: 0, blob: null, url: null, abort: null, job: 0 };
+const st = { kind: null, file: null, img: null, probe: null, date: null, seed: 0, blob: null, url: null, abort: null, job: 0,
+             mode: ['vhs', 'dot', 'tv'].includes(localStorage.getItem('roman-mode')) ? localStorage.getItem('roman-mode') : 'vhs' };
+const modeButtons = [...document.querySelectorAll('#modes button')];
+const showMode = () => { modeButtons.forEach(b => b.classList.toggle('on', b.dataset.mode === st.mode)); ui.reroll.hidden = !(st.kind === 'photo' && st.img && st.mode === 'vhs'); };
+showMode();
 
 async function engine() {
   if (look) return;
@@ -57,7 +61,7 @@ ui.file.addEventListener('change', async () => {
       const img = new Image(); const u = URL.createObjectURL(f); img.src = u;
       try { await img.decode(); } catch (e) { throw new Error('この写真は読めませんでした'); } finally { setTimeout(() => URL.revokeObjectURL(u), 1000); }
       if (job !== st.job) return;
-      st.img = img; st.seed = (Math.random() * 1e9) >>> 0; ui.dt.value = toLocalInput(st.date); ui.reroll.hidden = false;
+      st.img = img; st.seed = (Math.random() * 1e9) >>> 0; ui.dt.value = toLocalInput(st.date); showMode();
       await renderPhoto(job);
     } else {
       if (!canConvertVideo()) throw new Error('このブラウザでは動画を変換できません。iOS を最新にしてからお試しください。');
@@ -73,7 +77,8 @@ async function renderPhoto(job) {
   busy(true, '変換中…', '');
   await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));   // 「変換中」を先に描かせる
   const img = st.img;
-  look.render(img, img.naturalWidth, img.naturalHeight, 0, { seed: st.seed, jitter: false, overlay: overlay.get(osdLines(st.date), st.seed % 100000) });
+  const ov = st.mode === 'dot' ? overlay.dotCard(st.date) : st.mode === 'tv' ? overlay.tvLayer(st.date) : overlay.get(osdLines(st.date), st.seed % 100000);
+  look.render(img, img.naturalWidth, img.naturalHeight, 0, { mode: st.mode, seed: st.seed, jitter: false, overlay: ov, dot: {} });
   const blob = await new Promise((res, rej) => look.canvas.toBlob(b => b ? res(b) : rej(new Error('画像を書き出せませんでした')), 'image/jpeg', 0.92));
   if (job !== st.job) return;
   setResult(blob, 'photo'); busy(false);
@@ -84,7 +89,7 @@ async function runVideo(job) {
   try { lock = navigator.wakeLock ? await navigator.wakeLock.request('screen') : null; } catch (e) { /* 使えなくても続ける */ }
   const t0 = performance.now(); busy(true, '変換中 0%', '画面を閉じずにお待ちください');
   try {
-    const blob = await convertVideo(st.file, look, overlay, { probe: st.probe, date: st.date, signal: ac.signal,
+    const blob = await convertVideo(st.file, look, overlay, { probe: st.probe, date: st.date, mode: st.mode, signal: ac.signal,
       onProgress: p => {
         if (job !== st.job) return; ui.bar.style.width = (p * 100).toFixed(1) + '%'; ui.busyText.textContent = `変換中 ${Math.round(p * 100)}%`;
         const left = p > 0.05 ? (performance.now() - t0) / p * (1 - p) / 1000 : null;
@@ -106,6 +111,16 @@ ui.dt.addEventListener('change', async () => {
   catch (e) { if (job === st.job) { busy(false); say(e.message || String(e)); } }
 });
 
+modeButtons.forEach(b => b.addEventListener('click', async () => {   // 見た目の切り替え（選んだものは次回も使う）
+  if (b.dataset.mode === st.mode) return;
+  st.mode = b.dataset.mode; localStorage.setItem('roman-mode', st.mode); showMode();
+  if (!st.file) return;
+  if (st.abort) st.abort.abort();
+  const job = ++st.job; say('');
+  try { if (st.kind === 'photo' && st.img) await renderPhoto(job); else if (st.kind === 'video' && st.probe) { clearResult(); await runVideo(job); } }
+  catch (e) { if (job === st.job) { busy(false); say(e.message || String(e)); } }
+}));
+
 ui.reroll.addEventListener('click', async () => {
   if (st.kind !== 'photo' || !st.img) return;
   st.seed = (Math.random() * 1e9) >>> 0; const job = ++st.job;
@@ -114,7 +129,7 @@ ui.reroll.addEventListener('click', async () => {
 
 ui.save.addEventListener('click', async () => {
   if (!st.blob) return;
-  const name = `roman_${stamp(st.date || new Date())}.${st.kind === 'video' ? 'mp4' : 'jpg'}`;
+  const name = `roman_${st.mode}_${stamp(st.date || new Date())}.${st.kind === 'video' ? 'mp4' : 'jpg'}`;
   const file = new File([st.blob], name, { type: st.blob.type });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === 'AbortError') return; }
@@ -123,5 +138,8 @@ ui.save.addEventListener('click', async () => {
 });
 
 // ホーム画面に追加したとき電波がなくても開けるように（試験中の localhost では使わない）
-if ('serviceWorker' in navigator && (!/^(localhost|127\.0\.0\.1)$/.test(location.hostname) || /[?&]sw=1/.test(location.search)))
+if ('serviceWorker' in navigator && (!/^(localhost|127\.0\.0\.1)$/.test(location.hostname) || /[?&]sw=1/.test(location.search))) {
+  const had = !!navigator.serviceWorker.controller;   // 新しい版が入ったら、まだ何も選んでいなければ開き直して新しい版にする
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (had && !st.file) location.reload(); });
   navigator.serviceWorker.register('sw.js').catch(e => console.warn('sw', e));
+}

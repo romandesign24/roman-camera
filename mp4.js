@@ -94,8 +94,13 @@ function trak(b, tk, mts) {
   const stsd = kid(b, stbl, 'stsd'), ent = kids(b, stsd.b + 8, stsd.e).next().value; if (!ent) return null;
   const t = { kind, ts, rot, fmt: ent.type, emptySec, mediaStart, samples: table(b, stbl) };
   if (kind === 'video') {
-    t.width = u16(b, ent.b + 24); t.height = u16(b, ent.b + 26);
-    for (const k of kids(b, ent.b + 78, ent.e)) if (k.type === 'avcC' || k.type === 'hvcC') { t.description = b.slice(k.b, k.e); t.codec = codecString(ent.type, k.type, t.description); }
+    t.width = u16(b, ent.b + 24); t.height = u16(b, ent.b + 26); let tr = null, dv = null;
+    for (const k of kids(b, ent.b + 78, ent.e)) {
+      if (k.type === 'avcC' || k.type === 'hvcC') { t.description = b.slice(k.b, k.e); t.codec = codecString(ent.type, k.type, t.description); }
+      else if (k.type === 'colr' && ['nclx', 'nclc'].includes(fourcc(b, k.b))) tr = u16(b, k.b + 6);          // 色の記録：伝達特性 18=HLG・16=PQ
+      else if (k.type === 'dvcC' || k.type === 'dvvC' || k.type === 'dvwC') dv = b[k.b + 4] >> 4;             // Dolby Vision：互換ID 4=HLG・1=PQ
+    }
+    t.hdr = tr === 18 || dv === 4 ? 'hlg' : tr === 16 || dv === 1 ? 'pq' : null;   // iPhone の HDR 動画は HLG
   } else {
     const ver = u16(b, ent.b + 8); let ch = u16(b, ent.b + 16), rate = u32(b, ent.b + 24) / 65536, cs = ent.b + 28;
     if (ver === 1) cs += 16; else if (ver === 2) { rate = new DataView(b.buffer, b.byteOffset + ent.b + 32, 8).getFloat64(0); ch = u32(b, ent.b + 40); cs = ent.b + 64; }

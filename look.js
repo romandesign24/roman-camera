@@ -1,13 +1,23 @@
-// 浪漫カメラ：見た目（VHS風）を作る。数字の正は 見本/look_reference.py（PIL版）で、これはそれを WebGL2 に移したもの。
-// 写真も動画の1コマも同じ道を通る：縦1080×1920に切り出し → 画質を落とす → にじみ・ノイズ → 左上ロゴ＋右上日時（どちらもグリッチ）。
+// 浪漫カメラ：見た目を作る（GPU＝WebGL2）。モードは3つ（代表の参考に合わせた）。数字の正は 見本/ の PIL 版。
+// ・vhs  … VHS風（look_reference.py v6）：若干の魚眼 → 画質を落とす → にじみ・ノイズ → 左上ロゴ＋右上日時（グリッチ）
+// ・dot  … ドット絵（look_pixel_reference.py）：180×320ドット・写真ごとの24色・格子のディザ・ポストカード風ラベル
+// ・tv   … 2000年代のテレビ番組風：SD のやわらかさ・かすみ・光のにじみ・番組ロゴ風のロゴ・視聴年齢表示風の日付・放送局ロゴ風
 
 export const W = 1080, H = 1920, TOP = 270, BAND_Y = 200, BAND_H = 520;   // ロゴと日時は y200〜720 の帯に入る
 export const P = {
-  sd: [240, 426], hsoft: 0.45, sharp: [5, 2.4], chromaDiv: 14, cbDx: 14, crDx: 18, sat: 0.80,
-  lift: [[12, 0.93], [14, 0.92], [24, 0.88]], glow: [24, 115, 2.2], glowTint: [150, 120, 110],
-  noise: 48, grain: 24, head: [70, 46, 26],
+  sd: [240, 426], hsoft: 0.45, sharp: [5, 2.4], chromaDiv: 14, cbDx: 14, crDx: 18, sat: 0.92,
+  lift: [[8, 0.95], [9, 0.94], [14, 0.91]], glow: [24, 115, 2.2], glowTint: [150, 120, 110],
+  noise: 30, grain: 10, head: [70, 46, 26],   // v6：粒子とノイズを弱めた（v5＝48・24）・黒を締めて色を少し濃く（v5＝0.80、12/14/24）
+  lens: [0.22, 0.006, 0.30],                  // v6：若干の魚眼（樽型）・周辺の色ずれ・周辺減光（インスタの参考＝VX1000系）
 };
-const PRE = [P.sd[0] * 2, P.sd[1] * 2];                 // まず 480×852 へ（2D canvas で回転・切り出し）→ 2×2平均で SD へ
+// ドット絵（look_pixel_reference.py と同じ）
+export const DOT = { size: [180, 320], colors: 24, sat: 1.15, spread: 0.05, dusk: 0.22 };
+const DK = W / DOT.size[0];   // 6：1ドット＝6px
+// 文字（ロゴ・日時）のグリッチ。v6 で弱めた（look_reference.py の G と同じ）
+export const G = { logoBands: [2, 4], logoShift: [3, 12], logoScan: 190, logoRgb: 3,
+                   osdBands: [1, 2], osdShift: [2, 6], osdScan: 205, osdRgb: 2, osdLowres: [0.6, 0.8, 1.6], burst: 1.6 };
+const PRE = [P.sd[0] * 2, P.sd[1] * 2];
+const TVS = [360, 640];                                  // テレビ：SD の大きさ                 // まず 480×852 へ（2D canvas で回転・切り出し）→ 2×2平均で SD へ
 const HS = Math.max(2, Math.floor(P.sd[0] * P.hsoft));  // 108：横だけさらに縮める幅
 const CW = Math.floor(W / P.chromaDiv);                 // 77：色のにじみ（横1/14）
 const GW = W / 4, GH = H / 4;                           // 明部のにじみは1/4で計算（半径24 → 6）
@@ -22,6 +32,8 @@ const sign = r => (r() < 0.5 ? -1 : 1);
 
 // ── 右上の日時：OCT 30 '26 ／ PM  1:24
 const MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const DAYS = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+const MONTHS = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
 export function osdLines(d) {
   const h = d.getHours(), h12 = h % 12 || 12;
   return [`${MON[d.getMonth()]} ${String(d.getDate()).padStart(2, ' ')} '${String(d.getFullYear() % 100).padStart(2, '0')}`,
@@ -39,6 +51,64 @@ const FS = {
   // 拡大・縮小（線形）。size＝出力の大きさ
   copy: HEAD + `uniform sampler2D t; uniform vec2 size;
 void main() { o = texture(t, gl_FragCoord.xy / size); }`,
+  // HDR（HLG/PQ）を普通の明るさ・色に直す。ブラウザが HDR の信号値をそのまま描いたとき用（iPhone の Safari/Chrome）。
+  // HLG → 光（OOTF γ1.2）→ 白を合わせる → BT.2020→709 → 明部をなだらかに → sRGB。Apple の HDR→SDR 変換に合わせた（平均の差 約7/255）
+  hdr: HEAD + `uniform sampler2D t; uniform int mode; uniform float white;
+float hlgInv(float v) { return v <= 0.5 ? v * v / 3.0 : (exp((v - 0.55991073) / 0.17883277) + 0.28466892) / 12.0; }
+float pqEotf(float v) { float p = pow(max(v, 0.0), 1.0 / 78.84375); return pow(max(p - 0.8359375, 0.0) / (18.8515625 - 18.6875 * p), 1.0 / 0.1593017578125); }
+float enc(float x) { return x <= 0.0031308 ? 12.92 * x : 1.055 * pow(x, 1.0 / 2.4) - 0.055; }
+void main() { vec3 e = texelFetch(t, ivec2(gl_FragCoord.xy), 0).rgb; vec3 L;
+  if (mode == 1) { vec3 E = vec3(hlgInv(e.r), hlgInv(e.g), hlgInv(e.b)); L = E * pow(max(dot(E, vec3(0.2627, 0.6780, 0.0593)), 1e-6), 0.2) / white; }
+  else L = vec3(pqEotf(e.r), pqEotf(e.g), pqEotf(e.b)) * 10000.0 / white;
+  L = max(mat3(1.6605, -0.1246, -0.0182, -0.5876, 1.1329, -0.1006, -0.0728, -0.0083, 1.1187) * L, 0.0);
+  float Y = dot(L, vec3(0.2126, 0.7152, 0.0722)); if (Y > 0.8) L *= (0.8 + 0.2 * (1.0 - exp(-(Y - 0.8) / 0.2))) / Y;
+  L = min(L, 1.0); o = vec4(enc(L.r), enc(L.g), enc(L.b), 1.0); }`,
+  // 若干の魚眼：樽型にゆがめて四隅まで埋める＋周辺の色ずれ（赤と青）＋周辺減光（look_reference.py の lens と同じ式）
+  lens: HEAD + `uniform sampler2D t; uniform vec2 size; uniform float k; uniform float ca; uniform float vig;
+void main() { vec2 c = size * 0.5, d = gl_FragCoord.xy - c; float r2 = dot(d, d) / dot(c, c), s = (1.0 + k * r2) / (1.0 + k);
+  vec3 col = vec3(texture(t, (c + d * s * (1.0 + ca)) / size).r, texture(t, (c + d * s) / size).g, texture(t, (c + d * s * (1.0 - ca)) / size).b);
+  o = vec4(col * (1.0 - vig * r2 * r2), 1.0); }`,
+  // 面積で平均して縮める（4×4 点）
+  boxdown: HEAD + `uniform sampler2D t; uniform vec2 src; uniform vec2 dst;
+void main() { vec2 sc = src / dst, base = floor(gl_FragCoord.xy) * sc; vec4 acc = vec4(0.0);
+  for (int j = 0; j < 4; j++) for (int i = 0; i < 4; i++) acc += texture(t, (base + (vec2(float(i), float(j)) + 0.5) * sc / 4.0) / src);
+  o = acc / 16.0; }`,
+  // ドット絵①：明るさを整える（1%で切る）→ 彩度 → 夕暮れの色味（暗部を紫・明部をクリーム）→ 3×3 の中央値でざらつきをならす
+  dotg: HEAD + `uniform sampler2D t; uniform vec3 lo; uniform vec3 hi; uniform float sat; uniform float dusk;
+const vec3 SH = vec3(52.0, 34.0, 92.0) / 255.0, LI = vec3(255.0, 238.0, 214.0) / 255.0, Y = vec3(0.299, 0.587, 0.114);
+vec3 grade(vec3 c) { c = clamp((c - lo) / max(hi - lo, vec3(1.0 / 255.0)), 0.0, 1.0); float l = dot(c, Y); c = clamp(l + sat * (c - l), 0.0, 1.0);
+  l = dot(c, Y); return c + (SH - c) * (dusk * (1.0 - l) * (1.0 - l)) + (LI - c) * (dusk * 0.6 * l * l); }
+void main() { ivec2 q = ivec2(gl_FragCoord.xy), m = textureSize(t, 0) - 1; vec3 v[9]; int k = 0;
+  for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) { v[k] = grade(texelFetch(t, clamp(q + ivec2(i, j), ivec2(0), m), 0).rgb); k++; }
+  vec3 a;
+#define S(i, j) a = min(v[i], v[j]); v[j] = max(v[i], v[j]); v[i] = a;
+  S(1, 2) S(4, 5) S(7, 8) S(0, 1) S(3, 4) S(6, 7) S(1, 2) S(4, 5) S(7, 8) S(0, 3) S(5, 8) S(4, 7) S(3, 6) S(1, 4) S(2, 5) S(4, 7) S(4, 2) S(6, 4) S(4, 2)
+  o = vec4(v[4], 1.0); }`,
+  // ドット絵②：4×4 の格子ディザ → いちばん近い色（OKLab）→ ポストカード風ラベルを重ねる
+  dotq: HEAD + `uniform sampler2D t; uniform sampler2D card; uniform vec3 pal[24]; uniform vec3 lab[24]; uniform int np; uniform float spread;
+const float B4[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+float lin(float c) { return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
+vec3 oklab(vec3 c) { c = vec3(lin(c.r), lin(c.g), lin(c.b));
+  float l = pow(0.4122214708 * c.r + 0.5363325363 * c.g + 0.0514459929 * c.b, 1.0 / 3.0), m = pow(0.2119034982 * c.r + 0.6806995451 * c.g + 0.1073969566 * c.b, 1.0 / 3.0),
+        s = pow(0.0883024619 * c.r + 0.2817188376 * c.g + 0.6299787005 * c.b, 1.0 / 3.0);
+  return vec3(0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s, 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s); }
+void main() { ivec2 q = ivec2(gl_FragCoord.xy); float d = (B4[(q.y & 3) * 4 + (q.x & 3)] + 0.5) / 16.0 - 0.5;
+  vec3 L = oklab(clamp(texelFetch(t, q, 0).rgb + d * spread, 0.0, 1.0)), res = pal[0]; float best = 1e9;
+  for (int i = 0; i < 24; i++) { if (i >= np) break; vec3 e = lab[i] - L; float dd = dot(e, e); if (dd < best) { best = dd; res = pal[i]; } }
+  vec4 c = texelFetch(card, q, 0); o = vec4(mix(res, c.rgb, c.a), 1.0); }`,
+  // ドット絵③：角を立てたまま 1080×1920 へ
+  nearest: HEAD + `uniform sampler2D t; uniform int k;
+void main() { int x = int(gl_FragCoord.x), y = ${H - 1} - int(gl_FragCoord.y); o = vec4(texelFetch(t, ivec2(x / k, y / k), 0).rgb, 1.0); }`,
+  // テレビ：色を少し濃く・暖かく → 黒を浮かせて明部を抑える（放送の白）→ 光のにじみ → ごく弱いノイズ → 番組ロゴ・日付・局ロゴ
+  tv: HEAD + `uniform sampler2D u; uniform sampler2D gw; uniform sampler2D ov; uniform uint seed;
+uvec3 pcg(uvec3 v) { v = v * 1664525u + 1013904223u; v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y; v ^= v >> 16u;
+  v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y; return v; }
+void main() { int x = int(gl_FragCoord.x), y = ${H - 1} - int(gl_FragCoord.y);
+  vec3 c = texelFetch(u, ivec2(x, y), 0).rgb; float l = dot(c, vec3(0.299, 0.587, 0.114));
+  c = clamp(l + 1.15 * (c - l), 0.0, 1.0) * vec3(1.03, 1.0, 0.95); c = 0.055 + c * 0.88;
+  vec3 b = texture(gw, (vec2(float(x), float(y)) + 0.5) / vec2(${W}.0, ${H}.0)).rgb; c += max(b - 0.55, 0.0) * 0.9 * vec3(1.0, 0.96, 0.9);
+  uvec3 h = pcg(uvec3(uint(x), uint(y), seed)); c += (float(h.x >> 8u) / 16777216.0 - 0.5) * 0.03;
+  vec4 k = texelFetch(ov, ivec2(x, y), 0); o = vec4(mix(clamp(c, 0.0, 1.0), k.rgb, k.a), 1.0); }`,
   // 横だけ縮める（PIL の BILINEAR 縮小＝三角フィルタ）
   tri: HEAD + `uniform sampler2D t; uniform float sc; uniform int sw;
 void main() { ivec2 q = ivec2(gl_FragCoord.xy); float cx = (float(q.x) + 0.5) * sc;
@@ -130,11 +200,12 @@ export class Look {
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     this.prog = {}; for (const k in FS) this.prog[k] = this._compile(FS[k]);
     const T = (w, h) => this._tex(w, h);
-    this.t = { pre: T(...PRE), sd: T(...P.sd), hs: T(HS, P.sd[1]), sb: T(...P.sd), up: T(W, H), bh: T(W, H), sh: T(W, H),
-               ch: T(CW, H), gr: T(W, H), g4: T(GW, GH), gb1: T(GW, GH), gb2: T(GW, GH), ov: T(W, BAND_H) };
-    this.f = {}; for (const k in this.t) if (k !== 'pre' && k !== 'ov') this.f[k] = this._fbo(this.t[k]);
+    this.t = { pre: T(...PRE), preH: T(...PRE), preL: T(...PRE), sd: T(...P.sd), hs: T(HS, P.sd[1]), sb: T(...P.sd), up: T(W, H), bh: T(W, H), sh: T(W, H),
+               ch: T(CW, H), gr: T(W, H), g4: T(GW, GH), gb1: T(GW, GH), gb2: T(GW, GH), ov: T(W, BAND_H),
+               ds: T(...DOT.size), dg: T(...DOT.size), dq: T(...DOT.size), card: T(...DOT.size), tvs: T(...TVS), ovF: T(W, H) };
+    this.f = {}; for (const k in this.t) if (!['pre', 'ov', 'card', 'ovF'].includes(k)) this.f[k] = this._fbo(this.t[k]);
+    this.keys = {};
     this.k5 = taps(P.sharp[0]); this.k6 = taps(P.glow[0] / 4);
-    this.ovKey = null;
   }
 
   _compile(fs) {
@@ -175,8 +246,20 @@ export class Look {
     this._pass('blur', dst, { t: src, orig }, { size: ['2f', w, h], dir: ['2f', ...dir], w0: ['1f', k.w0], wts: ['1fv', k.wts], offs: ['1fv', k.offs], n: ['1i', k.n], amount: ['1f', amount] });
   }
 
+  _upload(key, tex, w, h, data) {   // 透過の重ね絵を GPU へ（中身が変わったときだけ）
+    if (!data || this.keys[tex] === key) return;
+    const gl = this.gl; gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.t[tex]);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, data); this.keys[tex] = key;
+  }
+
+  _read(tex) {   // GPU の小さな画像を読む（ドット絵の色選び用）
+    const gl = this.gl, t = this.t[tex], buf = new Uint8Array(t.w * t.h * 4);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.f[tex]); gl.readPixels(0, 0, t.w, t.h, gl.RGBA, gl.UNSIGNED_BYTE, buf); return buf;
+  }
+
   /** src（img / VideoFrame / canvas）を描く。sw,sh＝src の大きさ、rot＝表示の回転（時計回り 0/90/180/270）。
-   *  o = { seed：ノイズ等の乱数, jitter：動画の揺れ, overlay：Overlay.get() の結果 } */
+   *  o = { mode：'vhs'|'dot'|'tv', seed：乱数, jitter：動画の揺れ, overlay：重ね絵（vhs＝Overlay.get、dot＝dotCard、tv＝tvLayer）,
+   *        hdr：'hlg'|'pq'（HDR の信号値のまま描かれたとき）, dot：ドット絵の色（1コマ目で決めて使い回す {} を渡す） } */
   render(src, sw, sh, rot, o) {
     const gl = this.gl, px = this.px;
     // 1) 縦9:16の中央を切り出して 480×852 へ（回転もここで）
@@ -188,33 +271,91 @@ export class Look {
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.t.pre);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.pre);
-    // 2) 画質を落とす：SD → 横だけさらに縮めて戻す → 1080×1920 → 強いシャープ
-    this._pass('copy', 'sd', { t: 'pre' }, { size: ['2f', ...P.sd] });
+    let s0 = 'pre';
+    if (o.hdr) { this._pass('hdr', 'preH', { t: 'pre' }, { mode: ['1i', o.hdr === 'pq' ? 2 : 1], white: ['1f', o.hdr === 'pq' ? 300 : 0.4] }); s0 = 'preH'; }
+    if (o.mode === 'dot') return this._dot(s0, o);
+    if (o.mode === 'tv') return this._tv(s0, o);
+    return this._vhs(s0, o);
+  }
+
+  _vhs(s0, o) {
+    // 若干の魚眼 → 画質を落とす：SD → 横だけさらに縮めて戻す → 1080×1920 → 強いシャープ
+    this._pass('lens', 'preL', { t: s0 }, { size: ['2f', ...PRE], k: ['1f', P.lens[0]], ca: ['1f', P.lens[1]], vig: ['1f', P.lens[2]] });
+    this._pass('copy', 'sd', { t: 'preL' }, { size: ['2f', ...P.sd] });
     this._pass('tri', 'hs', { t: 'sd' }, { sc: ['1f', P.sd[0] / HS], sw: ['1i', P.sd[0]] });
     this._pass('copy', 'sb', { t: 'hs' }, { size: ['2f', ...P.sd] });
     this._pass('bicubic', 'up', { t: 'sb' }, { src: ['2f', ...P.sd], dst: ['2f', W, H] });
     this._blur('up', 'bh', W, H, this.k5, [1, 0]);
     this._blur('bh', 'sh', W, H, this.k5, [0, 1], 'up', P.sharp[1]);
-    // 3) 色のにじみ・彩度・暗部の青み
+    // 色のにじみ・彩度・暗部の青み
     this._pass('chroma', 'ch', { s: 'sh' }, { sc: ['1f', W / CW] });
     this._pass('grade', 'gr', { s: 'sh', ch: 'ch' }, { cbDx: ['1f', P.cbDx], crDx: ['1f', P.crDx], sat: ['1f', P.sat],
       la: ['3f', ...P.lift.map(v => v[0])], lb: ['3f', ...P.lift.map(v => v[1])] });
-    // 4) 明部のにじみ（1/4で半径6＝元の24）
+    // 明部のにじみ（1/4で半径6＝元の24）
     this._pass('box4', 'g4', { g: 'gr' }, {});
     this._blur('g4', 'gb1', GW, GH, this.k6, [1, 0]);
     this._blur('gb1', 'gb2', GW, GH, this.k6, [0, 1]);
-    // 5) ロゴと日時（変わったときだけ送る）
-    if (o.overlay && o.overlay.key !== this.ovKey) {
-      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.t.ov);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, W, BAND_H, gl.RGBA, gl.UNSIGNED_BYTE, o.overlay.data); this.ovKey = o.overlay.key;
-    }
-    // 6) 仕上げ
+    if (o.overlay) this._upload(o.overlay.key, 'ov', W, BAND_H, o.overlay.data);
     const r = rng(o.seed), jit = o.jitter ? [randint(r, -2, 2), randint(r, -2, 2)] : [0, 0];
     this._pass('final', null, { g: 'gr', gw: 'gb2', ov: 'ov' }, {
       jit: ['2i', ...jit], hdx: ['1i', P.head[1] + randint(r, -8, 8)], seed: ['1ui', o.seed >>> 0],
       thr: ['1f', P.glow[1]], gain: ['1f', P.glow[2]], tint: ['3f', ...P.glowTint], nS: ['1f', P.noise], gS: ['1f', P.grain],
       hh: ['1i', P.head[0]], hn: ['1i', P.head[2]], useOv: ['1i', o.overlay ? 1 : 0] });
   }
+
+  _dot(s0, o) {
+    const st = o.dot || (o.dot = {});
+    this._pass('boxdown', 'ds', { t: s0 }, { src: ['2f', ...PRE], dst: ['2f', ...DOT.size] });
+    if (!st.lo) { const L = levels(this._read('ds')); st.lo = L.lo; st.hi = L.hi; }        // 1コマ目で明るさの幅を決める
+    this._pass('dotg', 'dg', { t: 'ds' }, { lo: ['3f', ...st.lo], hi: ['3f', ...st.hi], sat: ['1f', DOT.sat], dusk: ['1f', DOT.dusk] });
+    if (!st.pal) {                                                                               // 1コマ目で24色を決める（動画はそのまま使い回す）
+      st.pal = medianCut(this._read('dg'), DOT.colors); st.lab = st.pal.map(oklab);
+      st.palF = new Float32Array(72); st.labF = new Float32Array(72); st.pal.forEach((c, i) => { st.palF.set(c, i * 3); st.labF.set(st.lab[i], i * 3); });
+    }
+    if (o.overlay) this._upload(o.overlay.key, 'card', ...DOT.size, o.overlay.data);
+    this._pass('dotq', 'dq', { t: 'dg', card: 'card' }, { pal: ['3fv', st.palF], lab: ['3fv', st.labF], np: ['1i', st.pal.length], spread: ['1f', DOT.spread] });
+    this._pass('nearest', null, { t: 'dq' }, { k: ['1i', DK] });
+  }
+
+  _tv(s0, o) {
+    this._pass('boxdown', 'tvs', { t: s0 }, { src: ['2f', ...PRE], dst: ['2f', ...TVS] });
+    this._pass('bicubic', 'up', { t: 'tvs' }, { src: ['2f', ...TVS], dst: ['2f', W, H] });
+    this._pass('box4', 'g4', { g: 'up' }, {});
+    this._blur('g4', 'gb1', GW, GH, this.k6, [1, 0]);
+    this._blur('gb1', 'gb2', GW, GH, this.k6, [0, 1]);
+    if (o.overlay) this._upload(o.overlay.key, 'ovF', W, H, o.overlay.data);
+    this._pass('tv', null, { u: 'up', gw: 'gb2', ov: 'ovF' }, { seed: ['1ui', o.seed >>> 0] });
+  }
+}
+
+// ── ドット絵の色選び（CPU）：明るさの幅（1%で切る）と、写真から24色（メディアンカット）
+function levels(px) {
+  const n = px.length / 4, lo = [], hi = [];
+  for (let c = 0; c < 3; c++) {
+    const h = new Uint32Array(256); for (let i = 0; i < n; i++) h[px[i * 4 + c]]++;
+    const cut = n * 0.01; let a = 0, s = 0; while (a < 255 && s + h[a] <= cut) s += h[a++];
+    let b = 255; s = 0; while (b > a && s + h[b] <= cut) s += h[b--];
+    lo.push(a / 255); hi.push(b / 255);
+  }
+  return { lo, hi };
+}
+function medianCut(px, n) {
+  const N = px.length / 4; let boxes = [Array.from({ length: N }, (_, i) => i)];
+  const span = b => { const mn = [255, 255, 255], mx = [0, 0, 0]; for (const i of b) for (let c = 0; c < 3; c++) { const v = px[i * 4 + c]; if (v < mn[c]) mn[c] = v; if (v > mx[c]) mx[c] = v; } return mx.map((v, c) => v - mn[c]); };
+  while (boxes.length < n) {
+    let bi = -1, best = -1, bc = 0;
+    boxes.forEach((b, k) => { if (b.length < 2) return; const r = span(b), c = r.indexOf(Math.max(...r)), sc = r[c] * Math.sqrt(b.length); if (sc > best) { best = sc; bi = k; bc = c; } });
+    if (bi < 0 || best <= 0) break;
+    const b = boxes[bi].sort((i, j) => px[i * 4 + bc] - px[j * 4 + bc]), mid = b.length >> 1;
+    boxes.splice(bi, 1, b.slice(0, mid), b.slice(mid));
+  }
+  return boxes.map(b => { const s = [0, 0, 0]; for (const i of b) for (let c = 0; c < 3; c++) s[c] += px[i * 4 + c]; return s.map(v => v / b.length / 255); });
+}
+function oklab([r, g, b]) {
+  const lin = c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; r = lin(r); g = lin(g); b = lin(b);
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b), m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b),
+        s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  return [0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s, 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s, 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s];
 }
 
 // ── ロゴと日時（グリッチ）。CPU で 1080×520 の透過帯を作り、GPU で重ねる
@@ -236,6 +377,11 @@ const G5x7 = {
   'S': ['01111', '10000', '10000', '01110', '00001', '00001', '11110'], 'T': ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
   'U': ['10001', '10001', '10001', '10001', '10001', '10001', '01110'], 'V': ['10001', '10001', '10001', '10001', '10001', '01010', '00100'],
   'Y': ['10001', '10001', '01010', '00100', '00100', '00100', '00100'],
+  'H': ['10001', '10001', '10001', '11111', '10001', '10001', '10001'], 'I': ['01110', '00100', '00100', '00100', '00100', '00100', '01110'],
+  'K': ['10001', '10010', '10100', '11000', '10100', '10010', '10001'], 'Q': ['01110', '10001', '10001', '10001', '10101', '10010', '01101'],
+  'W': ['10001', '10001', '10001', '10101', '10101', '10101', '01010'], 'X': ['10001', '10001', '01010', '00100', '01010', '10001', '10001'],
+  'Z': ['11111', '00001', '00010', '00100', '01000', '10000', '11111'], '.': ['00000', '00000', '00000', '00000', '00000', '01100', '01100'],
+  '·': ['00000', '00000', '00000', '01100', '01100', '00000', '00000'],
 };
 
 class Gray { constructor(w, h, d) { this.w = w; this.h = h; this.d = d || new Float32Array(w * h); } }
@@ -314,7 +460,69 @@ export class Overlay {
     const c = document.createElement('canvas'); c.width = w; c.height = h;
     const x = c.getContext('2d', { willReadFrequently: true }); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high'; x.drawImage(logoImg, 0, 0, w, h);
     const d = x.getImageData(0, 0, w, h).data; this.logo = new Gray(w, h); for (let i = 0; i < w * h; i++) this.logo.d[i] = d[i * 4 + 3];
-    this.cache = new Map();
+    this.cache = new Map(); this.img = logoImg;
+  }
+
+  /** ドット絵：ポストカード風のラベル（180×320 のドットで描く）。look_pixel_reference.py の card と同じ配置 */
+  dotCard(dt) {
+    const key = 'dot|' + dt.toISOString().slice(0, 16), [w, h] = DOT.size, out = new Uint8ClampedArray(w * h * 4);
+    const put = (x, y, c) => { if (x < 0 || y < 0 || x >= w || y >= h) return; const i = (y * w + x) * 4; out[i] = c[0]; out[i + 1] = c[1]; out[i + 2] = c[2]; out[i + 3] = 255; };
+    const INK = [0x26, 0x21, 0x3f], PAPER = [0xf3, 0xef, 0xe6], SHADE = [0x1d, 0x18, 0x3c], GRAY = [0x8a, 0x86, 0xa0];
+    const text = (x, y, str, c) => [...str].forEach((ch, i) => (G5x7[ch] || G5x7[' ']).forEach((row, ry) => [...row].forEach((v, rx) => { if (v === '1') put(x + i * 6 + rx, y + ry, c); })));
+    const lw = 74, lh = Math.round(this.img.height * lw / this.img.width);
+    if (!this.dotLogo) {   // ロゴをドットにする（面積で縮めて、濃いところだけ残す）
+      const c = document.createElement('canvas'); c.width = lw; c.height = lh; const g = c.getContext('2d', { willReadFrequently: true });
+      g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high'; g.drawImage(this.img, 0, 0, lw, lh);
+      const a = g.getImageData(0, 0, lw, lh).data; this.dotLogo = Array.from({ length: lw * lh }, (_, i) => a[i * 4 + 3] > 110);
+    }
+    const x0 = 10, y0 = 26, cw = 160, ch = 6 + lh + 4 + 7 + 4 + 1 + 4 + 7 + 6;
+    for (let y = y0 + 1; y <= y0 + ch; y++) for (let x = x0 + 1; x <= x0 + cw; x++) put(x, y, SHADE);           // 影（右下に1ドット）
+    for (let y = y0; y < y0 + ch; y++) for (let x = x0; x < x0 + cw; x++) {
+      const edge = x === x0 || x === x0 + cw - 1 || y === y0 || y === y0 + ch - 1; put(x, y, edge && (x + y) % 2 === 0 ? INK : PAPER); }   // 点線のふち
+    let yy = y0 + 6;
+    for (let y = 0; y < lh; y++) for (let x = 0; x < lw; x++) if (this.dotLogo[y * lw + x]) put(x0 + 6 + x, yy + y, INK);
+    const hr = dt.getHours(), tm = `${hr < 12 ? 'AM' : 'PM'} ${hr % 12 || 12}:${String(dt.getMinutes()).padStart(2, '0')}`;
+    text(x0 + cw - 6 - tm.length * 6, yy + lh - 7, tm, INK);
+    yy += lh + 4; text(x0 + 6, yy, `${DAYS[(dt.getDay() + 6) % 7]} ${dt.getDate()} ${MONTHS[dt.getMonth()]}`, INK);
+    yy += 7 + 4; for (let x = x0 + 6; x < x0 + cw - 6; x += 2) put(x, yy, INK);
+    yy += 5; text(x0 + 6, yy, `STAY WITH ROMAN · ${dt.getFullYear()}`, GRAY);
+    return { key, data: new Uint8Array(out.buffer) };
+  }
+
+  /** テレビ：番組ロゴ風の浪漫制作ロゴ（左上）・視聴年齢表示風の日付（右上）・放送局ロゴ風（左下）。1080×1920 の透過 */
+  tvLayer(dt) {
+    const key = 'tv|' + dt.toISOString().slice(0, 16), c = document.createElement('canvas'); c.width = W; c.height = H;
+    const x = c.getContext('2d', { willReadFrequently: true }), img = this.img;
+    const tint = col => { const t = document.createElement('canvas'); t.width = img.width; t.height = img.height; const g = t.getContext('2d');
+      g.drawImage(img, 0, 0); g.globalCompositeOperation = 'source-in'; g.fillStyle = col; g.fillRect(0, 0, t.width, t.height); return t; };
+    // 番組ロゴ：少し傾けて、紺の太いふち＋影の上に白
+    const lw = 440, lh = Math.round(img.height * lw / img.width), navy = tint('#16206a');
+    x.save(); x.translate(64 + lw / 2, TOP + 30 + lh / 2); x.rotate(-5 * Math.PI / 180);
+    x.shadowColor = 'rgba(0, 0, 0, 0.55)'; x.shadowBlur = 16; x.shadowOffsetX = 6; x.shadowOffsetY = 9;
+    for (let a = 0; a < 16; a++) { x.drawImage(navy, -lw / 2 + 7 * Math.cos(a * Math.PI / 8), -lh / 2 + 7 * Math.sin(a * Math.PI / 8), lw, lh); if (!a) x.shadowColor = 'transparent'; }
+    x.drawImage(img, -lw / 2, -lh / 2, lw, lh);
+    const gloss = tint('#9fd2ff'), g2 = document.createElement('canvas'); g2.width = img.width; g2.height = img.height;
+    const gg = g2.getContext('2d'); gg.drawImage(gloss, 0, 0); gg.globalCompositeOperation = 'destination-in';
+    const grd = gg.createLinearGradient(0, 0, 0, img.height); grd.addColorStop(0, 'rgba(0,0,0,0)'); grd.addColorStop(0.55, 'rgba(0,0,0,0)'); grd.addColorStop(1, 'rgba(0,0,0,0.85)');
+    gg.fillStyle = grd; gg.fillRect(0, 0, img.width, img.height); x.drawImage(g2, -lw / 2, -lh / 2, lw, lh);   // 下半分を水色に（つやのグラデーション）
+    x.restore();
+    // 視聴年齢表示風の日付：白い箱・黒い太字（上＝月と年、中＝日、下＝時刻）
+    const bw = 214, bh = 290, bx = W - 60 - bw, by = TOP + 14, F = (wt, sz) => `${wt} ${sz}px "HelveticaNeue-CondensedBlack", "Helvetica Neue", "Arial Black", Arial, sans-serif`;
+    const fit = (str, wt, sz, max) => { x.font = F(wt, sz); while (x.measureText(str).width > max && sz > 10) { sz -= 2; x.font = F(wt, sz); } };
+    x.fillStyle = '#f7f6f1'; x.fillRect(bx, by, bw, bh); x.lineWidth = 7; x.strokeStyle = '#111'; x.strokeRect(bx + 3.5, by + 3.5, bw - 7, bh - 7);
+    x.fillStyle = '#111'; x.textAlign = 'center'; x.textBaseline = 'alphabetic';
+    const hr = dt.getHours(), mon = `${MON[dt.getMonth()]} '${String(dt.getFullYear() % 100).padStart(2, '0')}`, tm = `${hr < 12 ? 'AM' : 'PM'} ${hr % 12 || 12}:${String(dt.getMinutes()).padStart(2, '0')}`;
+    fit(mon, 900, 60, bw - 34); x.fillText(mon, bx + bw / 2, by + 74);
+    fit(String(dt.getDate()), 900, 176, bw - 30); x.fillText(String(dt.getDate()), bx + bw / 2, by + 216);
+    fit(tm, 900, 46, bw - 34); x.fillText(tm, bx + bw / 2, by + 268);
+    // 放送局ロゴ風（左下・半透明）：青い星に白いロゴ
+    x.save(); x.globalAlpha = 0.78; const sx = 150, sy = 1540;
+    x.beginPath(); for (let i = 0; i < 10; i++) { const r = i % 2 ? 46 : 104, a = -Math.PI / 2 + i * Math.PI / 5; x.lineTo(sx + r * Math.cos(a), sy + r * Math.sin(a)); } x.closePath();
+    const sg = x.createLinearGradient(sx, sy - 104, sx, sy + 90); sg.addColorStop(0, '#8fc4ff'); sg.addColorStop(1, '#2f5fd0'); x.fillStyle = sg; x.fill();
+    x.lineWidth = 4; x.strokeStyle = 'rgba(255, 255, 255, 0.9)'; x.stroke();
+    const bw2 = 230, bh2 = Math.round(img.height * bw2 / img.width); x.shadowColor = 'rgba(0, 0, 40, 0.7)'; x.shadowBlur = 6;
+    x.drawImage(img, sx - bw2 / 2 + 30, sy + 12, bw2, bh2); x.restore();
+    return { key, data: new Uint8Array(x.getImageData(0, 0, W, H).data.buffer) };
   }
 
   /** lines＝osdLines() の2行。seed で崩れ方が決まる。burst＝大きく乱れる */
@@ -326,16 +534,16 @@ export class Overlay {
   }
 
   _logo(seed, burst) {   // 横に裂けてずれる帯・3行おきの走査線の抜け・赤を右／青を左へ
-    const r = rng(seed), s = burst ? 2 : 1, pad = 40, L = this.logo, w = L.w + 2 * pad, h = L.h;
+    const r = rng(seed), s = burst ? G.burst : 1, pad = 40, L = this.logo, w = L.w + 2 * pad, h = L.h;
     const A = new Gray(w, h); for (let y = 0; y < h; y++) A.d.set(L.d.subarray(y * L.w, (y + 1) * L.w), y * w + pad);
-    const out = applyBands(A, mkBands(r, h, s, 3, 6, 6, 26)); scan(out, 150);
-    const R = shiftX(out, 6 * s), B = shiftX(out, -6 * s), Ly = new Layer(w, h);
+    const out = applyBands(A, mkBands(r, h, s, ...G.logoBands, ...G.logoShift)); scan(out, G.logoScan);
+    const off = Math.trunc(G.logoRgb * s), R = shiftX(out, off), B = shiftX(out, -off), Ly = new Layer(w, h);
     for (let i = 0; i < w * h; i++) { Ly.r[i] = R.d[i]; Ly.g[i] = out.d[i]; Ly.b[i] = B.d[i]; Ly.a[i] = Math.floor(Math.max(R.d[i], out.d[i], B.d[i]) * 0.95); }
     return Ly;
   }
 
   _osd(lines, seed, burst) {   // 白いドット文字＋黒い縁。画質を落としてグリッチ（ロゴより弱め）
-    const px = 9, pad = 40, r = rng(seed + 101), s = burst ? 2 : 1;
+    const px = 9, pad = 40, r = rng(seed + 101), s = burst ? G.burst : 1;
     const tw = Math.max(...lines.map(t => t.length)) * 6 * px, th = 7 * px + 84 * (lines.length - 1), w = tw + 2 * pad, h = th + 12;
     let text = new Gray(w, h);
     lines.forEach((t, k) => { const x0 = pad + tw - t.length * 6 * px, y0 = k * 84;
@@ -343,10 +551,10 @@ export class Overlay {
         if (c !== '1') return; const X = x0 + i * 6 * px + rx * px, Y = y0 + ry * px;
         for (let yy = Y; yy < Y + px; yy++) text.d.fill(255, yy * w + X, yy * w + X + px); }))); });
     let shadow = offsetWrap(maxFilter(text, 3), 3, 3);
-    text = lowres(text, 0.45, 1.2); shadow = lowres(shadow, 0.45, 2.0);
-    const bands = mkBands(r, h, s, 2, 4, 4, 12); text = applyBands(text, bands); shadow = applyBands(shadow, bands);
-    scan(text, 165);
-    const R = shiftX(text, 5 * s), B = shiftX(text, -5 * s), dark = new Layer(w, h), col = new Layer(w, h);
+    const [k, bt, bs] = G.osdLowres; text = lowres(text, k, bt); shadow = lowres(shadow, k, bs);
+    const bands = mkBands(r, h, s, ...G.osdBands, ...G.osdShift); text = applyBands(text, bands); shadow = applyBands(shadow, bands);
+    scan(text, G.osdScan);
+    const off = Math.trunc(G.osdRgb * s), R = shiftX(text, off), B = shiftX(text, -off), dark = new Layer(w, h), col = new Layer(w, h);
     for (let i = 0; i < w * h; i++) {
       dark.r[i] = 10; dark.g[i] = 10; dark.b[i] = 14; dark.a[i] = Math.floor(shadow.d[i] * 0.85);
       col.r[i] = Math.floor(R.d[i] * 246 / 255); col.g[i] = Math.floor(text.d[i] * 246 / 255); col.b[i] = Math.floor(B.d[i] * 246 / 255);

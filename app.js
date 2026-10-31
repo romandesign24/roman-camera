@@ -2,8 +2,9 @@
 import { Look, Overlay, osdLines } from './look.js';
 import { photoDate } from './exif.js';
 import { probeVideo, convertVideo, canConvertVideo } from './video.js';
+import { loadSegmenter } from './game3d.js';
 
-export const VERSION = 'v5 (2026-10-31)';
+export const VERSION = 'v7 (2026-10-31)';
 const MAX_SEC = 180;
 const $ = id => document.getElementById(id);
 const ui = { file: $('file'), work: $('work'), img: $('outImg'), vid: $('outVid'), busy: $('busy'), busyText: $('busyText'), busySub: $('busySub'),
@@ -73,12 +74,17 @@ ui.file.addEventListener('change', async () => {
   } catch (e) { if (job === st.job) { busy(false); say(e.message || String(e)); } }
 });
 
+async function segOrNull() {   // ゲーム：人の切り抜き（初回は読み込みに数秒）。使えなければ写真を看板にする
+  try { busy(true, '人を探す準備中…', '初回だけ少し時間がかかります'); return await loadSegmenter(); } catch (e) { console.warn('seg', e); return null; }
+}
+
 async function renderPhoto(job) {
   busy(true, '変換中…', '');
   await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));   // 「変換中」を先に描かせる
   const img = st.img;
   const ov = st.mode === 'dot' ? overlay.dotCard(st.date) : st.mode === 'game' ? overlay.gameLayer(st.date) : overlay.get(osdLines(st.date), st.seed % 100000);
-  look.render(img, img.naturalWidth, img.naturalHeight, 0, { mode: st.mode, seed: st.seed, jitter: false, overlay: ov, dot: {} });
+  const seg = st.mode === 'game' ? await segOrNull() : null;
+  look.render(img, img.naturalWidth, img.naturalHeight, 0, { mode: st.mode, seed: st.seed, jitter: false, overlay: ov, dot: {}, seg, t: 0 });
   const blob = await new Promise((res, rej) => look.canvas.toBlob(b => b ? res(b) : rej(new Error('画像を書き出せませんでした')), 'image/jpeg', 0.92));
   if (job !== st.job) return;
   setResult(blob, 'photo'); busy(false);
@@ -89,7 +95,8 @@ async function runVideo(job) {
   try { lock = navigator.wakeLock ? await navigator.wakeLock.request('screen') : null; } catch (e) { /* 使えなくても続ける */ }
   const t0 = performance.now(); busy(true, '変換中 0%', '画面を閉じずにお待ちください');
   try {
-    const blob = await convertVideo(st.file, look, overlay, { probe: st.probe, date: st.date, mode: st.mode, signal: ac.signal,
+    const seg = st.mode === 'game' ? await segOrNull() : null; busy(true, '変換中 0%', '画面を閉じずにお待ちください');
+    const blob = await convertVideo(st.file, look, overlay, { probe: st.probe, date: st.date, mode: st.mode, seg, signal: ac.signal,
       onProgress: p => {
         if (job !== st.job) return; ui.bar.style.width = (p * 100).toFixed(1) + '%'; ui.busyText.textContent = `変換中 ${Math.round(p * 100)}%`;
         const left = p > 0.05 ? (performance.now() - t0) / p * (1 - p) / 1000 : null;

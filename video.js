@@ -28,7 +28,7 @@ function burstFrames(n, fps) {
 }
 
 /** file を変換して Blob（video/mp4）を返す。probe＝probeVideo() の結果、date＝右上に出す日時、mode＝'vhs'|'dot'|'game' */
-export async function convertVideo(file, look, overlay, { probe, date, mode = 'vhs', onProgress, signal }) {
+export async function convertVideo(file, look, overlay, { probe, date, mode = 'vhs', seg = null, onProgress, signal }) {
   const { m, fps, duration } = probe || await probeVideo(file), v = m.video, S = v.samples;
   const dcfg = { codec: v.codec, codedWidth: v.width, codedHeight: v.height, description: v.description };
   let ok = false; try { ok = (await VideoDecoder.isConfigSupported(dcfg)).supported; } catch (e) { /* 下で */ }
@@ -57,7 +57,7 @@ export async function convertVideo(file, look, overlay, { probe, date, mode = 'v
         if (hdr === undefined) { const tr = frame.colorSpace && frame.colorSpace.transfer; hdr = v.hdr && tr !== 'hlg' && tr !== 'pq' ? v.hdr : null; }   // ブラウザが HDR のまま渡してきたら自分で直す
         const i = idx++, seed = 1000 + Math.floor(i / 4), burst = bursts.has(i);
         const ov = fixed || overlay.get(lines, burst ? seed * 7 + i : seed, burst);
-        look.render(frame, frame.displayWidth, frame.displayHeight, v.rot, { mode, seed: 77 + i, jitter: true, overlay: ov, hdr, dot });
+        look.render(frame, frame.displayWidth, frame.displayHeight, v.rot, { mode, seed: 77 + i, jitter: true, overlay: ov, hdr, dot, seg, t: (frame.timestamp - first) / 1e6 });
         const out = new VideoFrame(look.canvas, { timestamp: frame.timestamp - first, duration: frameUs });
         encoder.encode(out, { keyFrame: i % kf === 0 }); out.close();
         if (onProgress) onProgress(Math.min(1, idx / total));

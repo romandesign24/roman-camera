@@ -345,7 +345,7 @@ precision highp float; flat in vec3 vc; out vec4 o; void main() { o = vec4(vc, 1
   _game(s0, o) {
     // 人を切り抜いて PS1 風の 3D の世界に立たせる（game3d.js）→ 角を立てたまま拡大・5bit＋格子ディザ・ブラウン管の四隅 → 操作表示
     if (!this.g3d) this.g3d = new Game3D(this);
-    this.g3d.render(this.pre, o.seg || null, o.t || 0);
+    this.g3d.render(this.pre, o.seg || null, o.t || 0, o.scene || 'park');
     if (o.overlay) this._upload(o.overlay.key, 'ovF', W, H, o.overlay.data);
     this._pass('game', null, { t: 'gms', ov: 'ovF' }, {});
   }

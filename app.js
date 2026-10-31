@@ -3,7 +3,7 @@ import { Look, Overlay, osdLines } from './look.js';
 import { photoDate } from './exif.js';
 import { probeVideo, convertVideo, canConvertVideo } from './video.js';
 
-export const VERSION = 'v4 (2026-10-31)';
+export const VERSION = 'v5 (2026-10-31)';
 const MAX_SEC = 180;
 const $ = id => document.getElementById(id);
 const ui = { file: $('file'), work: $('work'), img: $('outImg'), vid: $('outVid'), busy: $('busy'), busyText: $('busyText'), busySub: $('busySub'),

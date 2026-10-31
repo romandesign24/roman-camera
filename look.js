@@ -1,7 +1,7 @@
 // 浪漫カメラ：見た目を作る（GPU＝WebGL2）。モードは3つ（代表の参考に合わせた）。数字の正は 見本/ の PIL 版。
 // ・vhs  … VHS風（look_reference.py v6）：若干の魚眼 → 画質を落とす → にじみ・ノイズ → 左上ロゴ＋右上日時（グリッチ）
 // ・dot  … ドット絵（look_pixel_reference.py）：180×320ドット・写真ごとの24色・格子のディザ・ポストカード風ラベル
-// ・game … PS1/PS2 時代のゲーム風（参考：jongmin.design・maddenmedia）：粗いドット・5bitの色と格子ディザ・ブラウン管の四隅・操作表示
+// ・game … PS1/PS2 時代のゲーム風（参考：jongmin.design・maddenmedia）：ポリゴン（約20pxの不規則な三角形・1面1色）・5bitの色・ブラウン管の四隅・操作表示
 
 export const W = 1080, H = 1920, TOP = 270, BAND_Y = 200, BAND_H = 520;   // ロゴと日時は y200〜720 の帯に入る
 export const P = {
@@ -107,12 +107,29 @@ void main() { ivec2 q = ivec2(gl_FragCoord.xy); vec3 c = texelFetch(t, q, 0).rgb
   c = clamp(l + 1.3 * (c - l), 0.0, 1.0); c = clamp((c - 0.5) * 1.12 + 0.5, 0.0, 1.0) * vec3(1.04, 1.0, 0.95);
   float d = (B4[(q.y & 3) * 4 + (q.x & 3)] + 0.5) / 16.0 - 0.5; c = floor(clamp(c, 0.0, 1.0) * 31.0 + 0.5 + d) / 31.0;
   o = vec4(clamp(c, 0.0, 1.0), 1.0); }`,
-  // ゲーム②：角を立てたまま拡大 → ブラウン管の丸い四隅と周辺減光 → 操作表示・ロゴ・日時
+  // ゲーム②（ポリゴン）：画面を約20pxの三角形に分け（頂点を少しずらして不規則に・位置は固定でちらつかない）、
+  // 三角形ごとに重心の色1色で塗る → 色を濃く・5bitに落とす → 面ごとに明るさを少し変える → ブラウン管の丸い四隅と周辺減光 → 操作表示
   game: HEAD + `uniform sampler2D t; uniform sampler2D ov;
-void main() { int x = int(gl_FragCoord.x), y = ${H - 1} - int(gl_FragCoord.y); vec3 c = texelFetch(t, ivec2(x / 5, y / 5), 0).rgb;
-  vec2 p = (vec2(float(x), float(y)) + 0.5) / vec2(${W}.0, ${H}.0) * 2.0 - 1.0; c *= 1.0 - 0.35 * pow(dot(p * vec2(0.9, 0.7), p * vec2(0.9, 0.7)), 2.0);
-  vec2 e = max(abs(vec2(float(x) + 0.5 - ${W / 2}.0, float(y) + 0.5 - ${H / 2}.0)) - vec2(${W / 2 - 70}.0, ${H / 2 - 70}.0), 0.0);
-  c *= 1.0 - smoothstep(66.0, 72.0, length(e));
+const float CS = 20.0;
+float hsh(vec2 v) { uvec2 u = uvec2(ivec2(v) + 4096); uint h = u.x * 73856093u ^ u.y * 19349663u; h ^= h >> 16u; h *= 2246822519u; h ^= h >> 13u; h *= 3266489917u; h ^= h >> 16u; return float(h & 65535u) / 65535.0; }
+vec2 vert(vec2 g) { vec2 m = vec2(${W}.0, ${H}.0) / CS; vec2 j = vec2(hsh(g), hsh(g + 777.0)) - 0.5;
+  j *= vec2(step(0.5, g.x) * step(g.x, floor(m.x) - 0.5), step(0.5, g.y) * step(g.y, floor(m.y) - 0.5)); return (g + j * 0.8) * CS; }
+bool inTri(vec2 p, vec2 a, vec2 b, vec2 c) { float d1 = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x), d2 = (c.x - b.x) * (p.y - b.y) - (c.y - b.y) * (p.x - b.x), d3 = (a.x - c.x) * (p.y - c.y) - (a.y - c.y) * (p.x - c.x);
+  return !((d1 < 0.0 || d2 < 0.0 || d3 < 0.0) && (d1 > 0.0 || d2 > 0.0 || d3 > 0.0)); }
+void main() { int x = int(gl_FragCoord.x), y = ${H - 1} - int(gl_FragCoord.y); vec2 p = vec2(float(x), float(y)) + 0.5, g0 = floor(p / CS);
+  vec2 cen = p, id = g0;   // 近くの9マスの三角形から、この点を含むものを探す
+  for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) { vec2 g = g0 + vec2(float(dx), float(dy));
+    vec2 A = vert(g), B = vert(g + vec2(1.0, 0.0)), C = vert(g + vec2(0.0, 1.0)), D = vert(g + vec2(1.0, 1.0));
+    bool flip = hsh(g + 333.0) > 0.5;   // 対角線の向きもマスごとに変えて不規則に
+    vec2 P1 = flip ? A : B, P2 = flip ? D : C, Q1 = flip ? B : A, Q2 = flip ? C : D;
+    if (inTri(p, P1, P2, Q1)) { cen = (P1 + P2 + Q1) / 3.0; id = g * 2.0; }
+    else if (inTri(p, P1, P2, Q2)) { cen = (P1 + P2 + Q2) / 3.0; id = g * 2.0 + 1.0; } }
+  bool up = true; vec2 g = id;
+  vec3 c = texture(t, cen / vec2(${W}.0, ${H}.0)).rgb; float l = dot(c, vec3(0.299, 0.587, 0.114));
+  c = clamp(l + 1.3 * (c - l), 0.0, 1.0); c = clamp((c - 0.5) * 1.12 + 0.5, 0.0, 1.0) * vec3(1.04, 1.0, 0.95);
+  c *= 0.95 + 0.10 * hsh(g); c = floor(clamp(c, 0.0, 1.0) * 31.0 + 0.5) / 31.0;
+  vec2 q = p / vec2(${W}.0, ${H}.0) * 2.0 - 1.0; c *= 1.0 - 0.35 * pow(dot(q * vec2(0.9, 0.7), q * vec2(0.9, 0.7)), 2.0);
+  vec2 e = max(abs(p - vec2(${W / 2}.0, ${H / 2}.0)) - vec2(${W / 2 - 70}.0, ${H / 2 - 70}.0), 0.0); c *= 1.0 - smoothstep(66.0, 72.0, length(e));
   vec4 k = texelFetch(ov, ivec2(x, y), 0); o = vec4(mix(c, k.rgb, k.a), 1.0); }`,
   // 横だけ縮める（PIL の BILINEAR 縮小＝三角フィルタ）
   tri: HEAD + `uniform sampler2D t; uniform float sc; uniform int sw;
@@ -324,10 +341,8 @@ export class Look {
   }
 
   _game(s0, o) {
-    this._pass('boxdown', 'gms', { t: s0 }, { src: ['2f', ...PRE], dst: ['2f', ...GMS] });
-    this._pass('gameq', 'gmq', { t: 'gms' }, {});
     if (o.overlay) this._upload(o.overlay.key, 'ovF', W, H, o.overlay.data);
-    this._pass('game', null, { t: 'gmq', ov: 'ovF' }, {});
+    this._pass('game', null, { t: s0, ov: 'ovF' }, {});
   }
 
 }

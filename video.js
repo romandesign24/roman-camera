@@ -27,7 +27,7 @@ function burstFrames(n, fps) {
   return out;
 }
 
-/** file を変換して Blob（video/mp4）を返す。probe＝probeVideo() の結果、date＝右上に出す日時、mode＝'vhs'|'dot'|'tv' */
+/** file を変換して Blob（video/mp4）を返す。probe＝probeVideo() の結果、date＝右上に出す日時、mode＝'vhs'|'dot'|'game' */
 export async function convertVideo(file, look, overlay, { probe, date, mode = 'vhs', onProgress, signal }) {
   const { m, fps, duration } = probe || await probeVideo(file), v = m.video, S = v.samples;
   const dcfg = { codec: v.codec, codedWidth: v.width, codedHeight: v.height, description: v.description };
@@ -38,7 +38,7 @@ export async function convertVideo(file, look, overlay, { probe, date, mode = 'v
   const total = S.n, kf = Math.max(1, Math.round(fps * 2)), bursts = burstFrames(total + 8, fps), lines = osdLines(date);
   const frameUs = Math.round(1e6 / fps);
   let err = null, first = null, idx = 0, avcC = null, hdr; const chunks = [];
-  const fixed = mode === 'dot' ? overlay.dotCard(date) : mode === 'tv' ? overlay.tvLayer(date) : null, dot = {};   // ドット絵とテレビの重ね絵は全コマ同じ
+  const fixed = mode === 'dot' ? overlay.dotCard(date) : mode === 'game' ? overlay.gameLayer(date) : null, dot = {};   // ドット絵とゲームの重ね絵は全コマ同じ
 
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {

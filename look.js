@@ -1,12 +1,13 @@
 // 浪漫カメラ：見た目を作る（GPU＝WebGL2）。モードは3つ（代表の参考に合わせた）。数字の正は 見本/ の PIL 版。
 // ・vhs  … VHS風（look_reference.py v6）：若干の魚眼 → 画質を落とす → にじみ・ノイズ → 左上ロゴ＋右上日時（グリッチ）
 // ・dot  … ドット絵（look_pixel_reference.py）：180×320ドット・写真ごとの24色・格子のディザ・ポストカード風ラベル
-// ・tv   … 2000年代のテレビ番組風：SD のやわらかさ・かすみ・光のにじみ・番組ロゴ風のロゴ・視聴年齢表示風の日付・放送局ロゴ風
+// ・game … PS1/PS2 時代のゲーム風（参考：jongmin.design・maddenmedia）：粗いドット・5bitの色と格子ディザ・ブラウン管の四隅・操作表示
 
 export const W = 1080, H = 1920, TOP = 270, BAND_Y = 200, BAND_H = 520;   // ロゴと日時は y200〜720 の帯に入る
 export const P = {
-  sd: [240, 426], hsoft: 0.45, sharp: [5, 2.4], chromaDiv: 14, cbDx: 14, crDx: 18, sat: 0.92,
-  lift: [[8, 0.95], [9, 0.94], [14, 0.91]], glow: [24, 115, 2.2], glowTint: [150, 120, 110],
+  sd: [200, 356], hsoft: 0.40, sharp: [5, 2.0], chromaDiv: 16, cbDx: 14, crDx: 18, sat: 0.92,   // v7：画質をもう一段落とした（v6＝240×426・0.45・2.4・1/14）
+  lift: [[8, 0.95], [9, 0.94], [14, 0.91]], glow: [24, 150, 1.6], glowTint: [150, 120, 110],     // v7：明部のにじみを弱めた（v6＝115・2.2）
+  knee: [170, 228],                                                                             // v7：ハイライトを落とす（170 から上を寝かせ、白は 228 で止める）
   noise: 30, grain: 10, head: [70, 46, 26],   // v6：粒子とノイズを弱めた（v5＝48・24）・黒を締めて色を少し濃く（v5＝0.80、12/14/24）
   lens: [0.22, 0.006, 0.30],                  // v6：若干の魚眼（樽型）・周辺の色ずれ・周辺減光（インスタの参考＝VX1000系）
 };
@@ -16,11 +17,11 @@ const DK = W / DOT.size[0];   // 6：1ドット＝6px
 // 文字（ロゴ・日時）のグリッチ。v6 で弱めた（look_reference.py の G と同じ）
 export const G = { logoBands: [2, 4], logoShift: [3, 12], logoScan: 190, logoRgb: 3,
                    osdBands: [1, 2], osdShift: [2, 6], osdScan: 205, osdRgb: 2, osdLowres: [0.6, 0.8, 1.6], burst: 1.6 };
-const PRE = [P.sd[0] * 2, P.sd[1] * 2];
-const TVS = [360, 640];                                  // テレビ：SD の大きさ                 // まず 480×852 へ（2D canvas で回転・切り出し）→ 2×2平均で SD へ
-const HS = Math.max(2, Math.floor(P.sd[0] * P.hsoft));  // 108：横だけさらに縮める幅
-const CW = Math.floor(W / P.chromaDiv);                 // 77：色のにじみ（横1/14）
-const GW = W / 4, GH = H / 4;                           // 明部のにじみは1/4で計算（半径24 → 6）
+const PRE = [480, 852];   // まず 480×852 へ（2D canvas で回転・切り出し）→ 面積の平均で各モードの大きさへ
+const GMS = [216, 384];                                  // ゲーム：PS1 くらいの粗さ（1ドット＝5px）
+const HS = Math.max(2, Math.floor(P.sd[0] * P.hsoft));  // 横だけさらに縮める幅
+const CW = Math.floor(W / P.chromaDiv);                 // 色のにじみ（横1/16）
+const GW = W / 4, GH = H / 4;                           // 明部のにじみは1/4で計算
 
 // ── 乱数（シード固定で毎回同じ崩れ方）
 export function rng(seed) {
@@ -99,16 +100,20 @@ void main() { ivec2 q = ivec2(gl_FragCoord.xy); float d = (B4[(q.y & 3) * 4 + (q
   // ドット絵③：角を立てたまま 1080×1920 へ
   nearest: HEAD + `uniform sampler2D t; uniform int k;
 void main() { int x = int(gl_FragCoord.x), y = ${H - 1} - int(gl_FragCoord.y); o = vec4(texelFetch(t, ivec2(x / k, y / k), 0).rgb, 1.0); }`,
-  // テレビ：色を少し濃く・暖かく → 黒を浮かせて明部を抑える（放送の白）→ 光のにじみ → ごく弱いノイズ → 番組ロゴ・日付・局ロゴ
-  tv: HEAD + `uniform sampler2D u; uniform sampler2D gw; uniform sampler2D ov; uniform uint seed;
-uvec3 pcg(uvec3 v) { v = v * 1664525u + 1013904223u; v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y; v ^= v >> 16u;
-  v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y; return v; }
-void main() { int x = int(gl_FragCoord.x), y = ${H - 1} - int(gl_FragCoord.y);
-  vec3 c = texelFetch(u, ivec2(x, y), 0).rgb; float l = dot(c, vec3(0.299, 0.587, 0.114));
-  c = clamp(l + 1.15 * (c - l), 0.0, 1.0) * vec3(1.03, 1.0, 0.95); c = 0.055 + c * 0.88;
-  vec3 b = texture(gw, (vec2(float(x), float(y)) + 0.5) / vec2(${W}.0, ${H}.0)).rgb; c += max(b - 0.55, 0.0) * 0.9 * vec3(1.0, 0.96, 0.9);
-  uvec3 h = pcg(uvec3(uint(x), uint(y), seed)); c += (float(h.x >> 8u) / 16777216.0 - 0.5) * 0.03;
-  vec4 k = texelFetch(ov, ivec2(x, y), 0); o = vec4(mix(clamp(c, 0.0, 1.0), k.rgb, k.a), 1.0); }`,
+  // ゲーム①（PS1/PS2 風）：色を濃く・暖かく・少し硬く → 1色5bit（32段）に落として4×4の格子ディザ（PS1 と同じやり方）
+  gameq: HEAD + `uniform sampler2D t;
+const float B4[16] = float[16](0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+void main() { ivec2 q = ivec2(gl_FragCoord.xy); vec3 c = texelFetch(t, q, 0).rgb; float l = dot(c, vec3(0.299, 0.587, 0.114));
+  c = clamp(l + 1.3 * (c - l), 0.0, 1.0); c = clamp((c - 0.5) * 1.12 + 0.5, 0.0, 1.0) * vec3(1.04, 1.0, 0.95);
+  float d = (B4[(q.y & 3) * 4 + (q.x & 3)] + 0.5) / 16.0 - 0.5; c = floor(clamp(c, 0.0, 1.0) * 31.0 + 0.5 + d) / 31.0;
+  o = vec4(clamp(c, 0.0, 1.0), 1.0); }`,
+  // ゲーム②：角を立てたまま拡大 → ブラウン管の丸い四隅と周辺減光 → 操作表示・ロゴ・日時
+  game: HEAD + `uniform sampler2D t; uniform sampler2D ov;
+void main() { int x = int(gl_FragCoord.x), y = ${H - 1} - int(gl_FragCoord.y); vec3 c = texelFetch(t, ivec2(x / 5, y / 5), 0).rgb;
+  vec2 p = (vec2(float(x), float(y)) + 0.5) / vec2(${W}.0, ${H}.0) * 2.0 - 1.0; c *= 1.0 - 0.35 * pow(dot(p * vec2(0.9, 0.7), p * vec2(0.9, 0.7)), 2.0);
+  vec2 e = max(abs(vec2(float(x) + 0.5 - ${W / 2}.0, float(y) + 0.5 - ${H / 2}.0)) - vec2(${W / 2 - 70}.0, ${H / 2 - 70}.0), 0.0);
+  c *= 1.0 - smoothstep(66.0, 72.0, length(e));
+  vec4 k = texelFetch(ov, ivec2(x, y), 0); o = vec4(mix(c, k.rgb, k.a), 1.0); }`,
   // 横だけ縮める（PIL の BILINEAR 縮小＝三角フィルタ）
   tri: HEAD + `uniform sampler2D t; uniform float sc; uniform int sw;
 void main() { ivec2 q = ivec2(gl_FragCoord.xy); float cx = (float(q.x) + 0.5) * sc;
@@ -155,7 +160,7 @@ void main() { vec2 p = floor(gl_FragCoord.xy) * 4.0; vec2 z = vec2(${W}.0, ${H}.
   o = 0.25 * (texture(g, (p + vec2(1.0, 1.0)) / z) + texture(g, (p + vec2(3.0, 1.0)) / z) + texture(g, (p + vec2(1.0, 3.0)) / z) + texture(g, (p + vec2(3.0, 3.0)) / z)); }`,
   // 仕上げ：明部のにじみ・揺れ（動画）・ヘッド切替ノイズ・横に流れた静止ノイズ・粒子・ロゴと日時
   final: HEAD + `uniform sampler2D g; uniform sampler2D gw; uniform sampler2D ov; uniform ivec2 jit; uniform int hdx; uniform uint seed;
-uniform float thr; uniform float gain; uniform vec3 tint; uniform float nS; uniform float gS; uniform int hh; uniform int hn; uniform int useOv;
+uniform float thr; uniform float gain; uniform vec3 tint; uniform float nS; uniform float gS; uniform int hh; uniform int hn; uniform int useOv; uniform vec2 knee;
 uvec3 pcg(uvec3 v) { v = v * 1664525u + 1013904223u; v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y; v ^= v >> 16u;
   v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y; return v; }
 float gauss(int x, int y, uint k) { uvec3 h = pcg(uvec3(uint(x), uint(y), seed * 4u + k));
@@ -163,7 +168,8 @@ float gauss(int x, int y, uint k) { uvec3 h = pcg(uvec3(uint(x), uint(y), seed *
 float nz(int x, int y, uint k, float s) { return clamp(floor(128.0 + s * gauss(x, y, k) + 0.5), 0.0, 255.0); }
 vec3 base(int x, int y) { x -= jit.x; y -= jit.y; if (x < 0 || y < 0 || x >= ${W} || y >= ${H}) return vec3(0.0);
   vec3 c = texelFetch(g, ivec2(x, y), 0).rgb * 255.0; vec3 b = texture(gw, (vec2(float(x), float(y)) + 0.5) / vec2(${W}.0, ${H}.0)).rgb * 255.0;
-  vec3 glw = min(vec3(255.0), floor(max(vec3(0.0), b - thr) * gain)); return min(vec3(255.0), c + floor(glw * tint / 255.0)); }
+  vec3 glw = min(vec3(255.0), floor(max(vec3(0.0), b - thr) * gain)); vec3 v = min(vec3(255.0), c + floor(glw * tint / 255.0));
+  vec3 t = floor(knee.x + (knee.y - knee.x) * (1.0 - exp(-(v - knee.x) / (knee.y - knee.x)))); return mix(v, t, step(vec3(knee.x + 0.5), v)); }   // ハイライトを寝かせる
 void main() { int x = int(gl_FragCoord.x), y = ${H - 1} - int(gl_FragCoord.y); vec3 v;
   if (y >= ${H} - hh) { int xs = x - hdx; if (xs < 0) xs += ${W}; if (xs >= ${W}) xs -= ${W}; v = base(xs, y); } else v = base(x, y);
   if (y >= ${H} - hn) v = floor(v * 0.4 + nz(x, y, 1u, 80.0) * 0.6 + 0.5);
@@ -202,7 +208,7 @@ export class Look {
     const T = (w, h) => this._tex(w, h);
     this.t = { pre: T(...PRE), preH: T(...PRE), preL: T(...PRE), sd: T(...P.sd), hs: T(HS, P.sd[1]), sb: T(...P.sd), up: T(W, H), bh: T(W, H), sh: T(W, H),
                ch: T(CW, H), gr: T(W, H), g4: T(GW, GH), gb1: T(GW, GH), gb2: T(GW, GH), ov: T(W, BAND_H),
-               ds: T(...DOT.size), dg: T(...DOT.size), dq: T(...DOT.size), card: T(...DOT.size), tvs: T(...TVS), ovF: T(W, H) };
+               ds: T(...DOT.size), dg: T(...DOT.size), dq: T(...DOT.size), card: T(...DOT.size), gms: T(...GMS), gmq: T(...GMS), ovF: T(W, H) };
     this.f = {}; for (const k in this.t) if (!['pre', 'ov', 'card', 'ovF'].includes(k)) this.f[k] = this._fbo(this.t[k]);
     this.keys = {};
     this.k5 = taps(P.sharp[0]); this.k6 = taps(P.glow[0] / 4);
@@ -258,7 +264,7 @@ export class Look {
   }
 
   /** src（img / VideoFrame / canvas）を描く。sw,sh＝src の大きさ、rot＝表示の回転（時計回り 0/90/180/270）。
-   *  o = { mode：'vhs'|'dot'|'tv', seed：乱数, jitter：動画の揺れ, overlay：重ね絵（vhs＝Overlay.get、dot＝dotCard、tv＝tvLayer）,
+   *  o = { mode：'vhs'|'dot'|'game', seed：乱数, jitter：動画の揺れ, overlay：重ね絵（vhs＝Overlay.get、dot＝dotCard、game＝gameLayer）,
    *        hdr：'hlg'|'pq'（HDR の信号値のまま描かれたとき）, dot：ドット絵の色（1コマ目で決めて使い回す {} を渡す） } */
   render(src, sw, sh, rot, o) {
     const gl = this.gl, px = this.px;
@@ -274,14 +280,14 @@ export class Look {
     let s0 = 'pre';
     if (o.hdr) { this._pass('hdr', 'preH', { t: 'pre' }, { mode: ['1i', o.hdr === 'pq' ? 2 : 1], white: ['1f', o.hdr === 'pq' ? 300 : 0.4] }); s0 = 'preH'; }
     if (o.mode === 'dot') return this._dot(s0, o);
-    if (o.mode === 'tv') return this._tv(s0, o);
+    if (o.mode === 'game') return this._game(s0, o);
     return this._vhs(s0, o);
   }
 
   _vhs(s0, o) {
     // 若干の魚眼 → 画質を落とす：SD → 横だけさらに縮めて戻す → 1080×1920 → 強いシャープ
     this._pass('lens', 'preL', { t: s0 }, { size: ['2f', ...PRE], k: ['1f', P.lens[0]], ca: ['1f', P.lens[1]], vig: ['1f', P.lens[2]] });
-    this._pass('copy', 'sd', { t: 'preL' }, { size: ['2f', ...P.sd] });
+    this._pass('boxdown', 'sd', { t: 'preL' }, { src: ['2f', ...PRE], dst: ['2f', ...P.sd] });
     this._pass('tri', 'hs', { t: 'sd' }, { sc: ['1f', P.sd[0] / HS], sw: ['1i', P.sd[0]] });
     this._pass('copy', 'sb', { t: 'hs' }, { size: ['2f', ...P.sd] });
     this._pass('bicubic', 'up', { t: 'sb' }, { src: ['2f', ...P.sd], dst: ['2f', W, H] });
@@ -300,7 +306,7 @@ export class Look {
     this._pass('final', null, { g: 'gr', gw: 'gb2', ov: 'ov' }, {
       jit: ['2i', ...jit], hdx: ['1i', P.head[1] + randint(r, -8, 8)], seed: ['1ui', o.seed >>> 0],
       thr: ['1f', P.glow[1]], gain: ['1f', P.glow[2]], tint: ['3f', ...P.glowTint], nS: ['1f', P.noise], gS: ['1f', P.grain],
-      hh: ['1i', P.head[0]], hn: ['1i', P.head[2]], useOv: ['1i', o.overlay ? 1 : 0] });
+      hh: ['1i', P.head[0]], hn: ['1i', P.head[2]], useOv: ['1i', o.overlay ? 1 : 0], knee: ['2f', ...P.knee] });
   }
 
   _dot(s0, o) {
@@ -317,15 +323,13 @@ export class Look {
     this._pass('nearest', null, { t: 'dq' }, { k: ['1i', DK] });
   }
 
-  _tv(s0, o) {
-    this._pass('boxdown', 'tvs', { t: s0 }, { src: ['2f', ...PRE], dst: ['2f', ...TVS] });
-    this._pass('bicubic', 'up', { t: 'tvs' }, { src: ['2f', ...TVS], dst: ['2f', W, H] });
-    this._pass('box4', 'g4', { g: 'up' }, {});
-    this._blur('g4', 'gb1', GW, GH, this.k6, [1, 0]);
-    this._blur('gb1', 'gb2', GW, GH, this.k6, [0, 1]);
+  _game(s0, o) {
+    this._pass('boxdown', 'gms', { t: s0 }, { src: ['2f', ...PRE], dst: ['2f', ...GMS] });
+    this._pass('gameq', 'gmq', { t: 'gms' }, {});
     if (o.overlay) this._upload(o.overlay.key, 'ovF', W, H, o.overlay.data);
-    this._pass('tv', null, { u: 'up', gw: 'gb2', ov: 'ovF' }, { seed: ['1ui', o.seed >>> 0] });
+    this._pass('game', null, { t: 'gmq', ov: 'ovF' }, {});
   }
+
 }
 
 // ── ドット絵の色選び（CPU）：明るさの幅（1%で切る）と、写真から24色（メディアンカット）
@@ -489,41 +493,25 @@ export class Overlay {
     return { key, data: new Uint8Array(out.buffer) };
   }
 
-  /** テレビ：番組ロゴ風の浪漫制作ロゴ（左上）・視聴年齢表示風の日付（右上）・放送局ロゴ風（左下）。1080×1920 の透過 */
-  tvLayer(dt) {
-    const key = 'tv|' + dt.toISOString().slice(0, 16), c = document.createElement('canvas'); c.width = W; c.height = H;
-    const x = c.getContext('2d', { willReadFrequently: true }), img = this.img;
-    const tint = col => { const t = document.createElement('canvas'); t.width = img.width; t.height = img.height; const g = t.getContext('2d');
-      g.drawImage(img, 0, 0); g.globalCompositeOperation = 'source-in'; g.fillStyle = col; g.fillRect(0, 0, t.width, t.height); return t; };
-    // 番組ロゴ：少し傾けて、紺の太いふち＋影の上に白
-    const lw = 440, lh = Math.round(img.height * lw / img.width), navy = tint('#16206a');
-    x.save(); x.translate(64 + lw / 2, TOP + 30 + lh / 2); x.rotate(-5 * Math.PI / 180);
-    x.shadowColor = 'rgba(0, 0, 0, 0.55)'; x.shadowBlur = 16; x.shadowOffsetX = 6; x.shadowOffsetY = 9;
-    for (let a = 0; a < 16; a++) { x.drawImage(navy, -lw / 2 + 7 * Math.cos(a * Math.PI / 8), -lh / 2 + 7 * Math.sin(a * Math.PI / 8), lw, lh); if (!a) x.shadowColor = 'transparent'; }
-    x.drawImage(img, -lw / 2, -lh / 2, lw, lh);
-    const gloss = tint('#9fd2ff'), g2 = document.createElement('canvas'); g2.width = img.width; g2.height = img.height;
-    const gg = g2.getContext('2d'); gg.drawImage(gloss, 0, 0); gg.globalCompositeOperation = 'destination-in';
-    const grd = gg.createLinearGradient(0, 0, 0, img.height); grd.addColorStop(0, 'rgba(0,0,0,0)'); grd.addColorStop(0.55, 'rgba(0,0,0,0)'); grd.addColorStop(1, 'rgba(0,0,0,0.85)');
-    gg.fillStyle = grd; gg.fillRect(0, 0, img.width, img.height); x.drawImage(g2, -lw / 2, -lh / 2, lw, lh);   // 下半分を水色に（つやのグラデーション）
-    x.restore();
-    // 視聴年齢表示風の日付：白い箱・黒い太字（上＝月と年、中＝日、下＝時刻）
-    const bw = 214, bh = 290, bx = W - 60 - bw, by = TOP + 14, F = (wt, sz) => `${wt} ${sz}px "HelveticaNeue-CondensedBlack", "Helvetica Neue", "Arial Black", Arial, sans-serif`;
-    const fit = (str, wt, sz, max) => { x.font = F(wt, sz); while (x.measureText(str).width > max && sz > 10) { sz -= 2; x.font = F(wt, sz); } };
-    x.fillStyle = '#f7f6f1'; x.fillRect(bx, by, bw, bh); x.lineWidth = 7; x.strokeStyle = '#111'; x.strokeRect(bx + 3.5, by + 3.5, bw - 7, bh - 7);
-    x.fillStyle = '#111'; x.textAlign = 'center'; x.textBaseline = 'alphabetic';
-    const hr = dt.getHours(), mon = `${MON[dt.getMonth()]} '${String(dt.getFullYear() % 100).padStart(2, '0')}`, tm = `${hr < 12 ? 'AM' : 'PM'} ${hr % 12 || 12}:${String(dt.getMinutes()).padStart(2, '0')}`;
-    fit(mon, 900, 60, bw - 34); x.fillText(mon, bx + bw / 2, by + 74);
-    fit(String(dt.getDate()), 900, 176, bw - 30); x.fillText(String(dt.getDate()), bx + bw / 2, by + 216);
-    fit(tm, 900, 46, bw - 34); x.fillText(tm, bx + bw / 2, by + 268);
-    // 放送局ロゴ風（左下・半透明）：青い星に白いロゴ
-    x.save(); x.globalAlpha = 0.78; const sx = 150, sy = 1540;
-    x.beginPath(); for (let i = 0; i < 10; i++) { const r = i % 2 ? 46 : 104, a = -Math.PI / 2 + i * Math.PI / 5; x.lineTo(sx + r * Math.cos(a), sy + r * Math.sin(a)); } x.closePath();
-    const sg = x.createLinearGradient(sx, sy - 104, sx, sy + 90); sg.addColorStop(0, '#8fc4ff'); sg.addColorStop(1, '#2f5fd0'); x.fillStyle = sg; x.fill();
-    x.lineWidth = 4; x.strokeStyle = 'rgba(255, 255, 255, 0.9)'; x.stroke();
-    const bw2 = 230, bh2 = Math.round(img.height * bw2 / img.width); x.shadowColor = 'rgba(0, 0, 40, 0.7)'; x.shadowBlur = 6;
-    x.drawImage(img, sx - bw2 / 2 + 30, sy + 12, bw2, bh2); x.restore();
+  /** ゲーム：画面下の操作表示（PRESS ✕ TO SAVE）にロゴと日時。1080×1920 の透過 */
+  gameLayer(dt) {
+    const key = 'game|' + dt.toISOString().slice(0, 16), c = document.createElement('canvas'); c.width = W; c.height = H;
+    const x = c.getContext('2d', { willReadFrequently: true }), img = this.img, F = sz => `800 ${sz}px "Helvetica Neue", Arial, sans-serif`;
+    const hr = dt.getHours(), tm = `${MON[dt.getMonth()]} ${dt.getDate()} ${dt.getFullYear()} · ${hr < 12 ? 'AM' : 'PM'} ${hr % 12 || 12}:${String(dt.getMinutes()).padStart(2, '0')}`;
+    const bw = 660, bh = 250, bx = (W - bw) / 2, by = 1330, r = 22;
+    x.save(); x.shadowColor = 'rgba(80, 160, 255, 0.55)'; x.shadowBlur = 30;
+    x.beginPath(); x.roundRect(bx, by, bw, bh, r); x.fillStyle = 'rgba(12, 16, 34, 0.78)'; x.fill(); x.restore();
+    x.lineWidth = 3; x.strokeStyle = 'rgba(170, 205, 255, 0.85)'; x.beginPath(); x.roundRect(bx, by, bw, bh, r); x.stroke();
+    const lw = 250, lh = Math.round(img.height * lw / img.width); x.drawImage(img, (W - lw) / 2, by + 16, lw, lh);
+    x.fillStyle = '#e8eefc'; x.textAlign = 'center'; x.font = F(30); x.fillText(tm, W / 2, by + 16 + lh + 44);
+    x.font = F(36); x.textAlign = 'left'; const a = 'PRESS', b = 'TO SAVE', gap = 64, wa = x.measureText(a).width, wb = x.measureText(b).width;
+    const x0 = W / 2 - (wa + gap + wb) / 2, cy = by + bh - 42, cx = x0 + wa + gap / 2;
+    x.fillText(a, x0, cy + 13); x.fillText(b, x0 + wa + gap, cy + 13);
+    x.beginPath(); x.arc(cx, cy, 22, 0, Math.PI * 2); x.fillStyle = '#2f62d8'; x.fill(); x.lineWidth = 3; x.strokeStyle = '#cfe0ff'; x.stroke();
+    x.strokeStyle = '#ffffff'; x.lineWidth = 5; x.beginPath(); x.moveTo(cx - 9, cy - 9); x.lineTo(cx + 9, cy + 9); x.moveTo(cx + 9, cy - 9); x.lineTo(cx - 9, cy + 9); x.stroke();
     return { key, data: new Uint8Array(x.getImageData(0, 0, W, H).data.buffer) };
   }
+
 
   /** lines＝osdLines() の2行。seed で崩れ方が決まる。burst＝大きく乱れる */
   get(lines, seed, burst = false) {

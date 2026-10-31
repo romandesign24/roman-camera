@@ -3,7 +3,7 @@ import { Look, Overlay, osdLines } from './look.js';
 import { photoDate } from './exif.js';
 import { probeVideo, convertVideo, canConvertVideo } from './video.js';
 
-export const VERSION = 'v2 (2026-10-30)';
+export const VERSION = 'v4 (2026-10-31)';
 const MAX_SEC = 180;
 const $ = id => document.getElementById(id);
 const ui = { file: $('file'), work: $('work'), img: $('outImg'), vid: $('outVid'), busy: $('busy'), busyText: $('busyText'), busySub: $('busySub'),
@@ -12,7 +12,7 @@ $('ver').textContent = VERSION;
 
 let look = null, overlay = null;
 const st = { kind: null, file: null, img: null, probe: null, date: null, seed: 0, blob: null, url: null, abort: null, job: 0,
-             mode: ['vhs', 'dot', 'tv'].includes(localStorage.getItem('roman-mode')) ? localStorage.getItem('roman-mode') : 'vhs' };
+             mode: ['vhs', 'dot', 'game'].includes(localStorage.getItem('roman-mode')) ? localStorage.getItem('roman-mode') : 'vhs' };
 const modeButtons = [...document.querySelectorAll('#modes button')];
 const showMode = () => { modeButtons.forEach(b => b.classList.toggle('on', b.dataset.mode === st.mode)); ui.reroll.hidden = !(st.kind === 'photo' && st.img && st.mode === 'vhs'); };
 showMode();
@@ -77,7 +77,7 @@ async function renderPhoto(job) {
   busy(true, '変換中…', '');
   await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));   // 「変換中」を先に描かせる
   const img = st.img;
-  const ov = st.mode === 'dot' ? overlay.dotCard(st.date) : st.mode === 'tv' ? overlay.tvLayer(st.date) : overlay.get(osdLines(st.date), st.seed % 100000);
+  const ov = st.mode === 'dot' ? overlay.dotCard(st.date) : st.mode === 'game' ? overlay.gameLayer(st.date) : overlay.get(osdLines(st.date), st.seed % 100000);
   look.render(img, img.naturalWidth, img.naturalHeight, 0, { mode: st.mode, seed: st.seed, jitter: false, overlay: ov, dot: {} });
   const blob = await new Promise((res, rej) => look.canvas.toBlob(b => b ? res(b) : rej(new Error('画像を書き出せませんでした')), 'image/jpeg', 0.92));
   if (job !== st.job) return;

@@ -4,7 +4,7 @@ import { photoDate } from './exif.js';
 import { probeVideo, convertVideo, canConvertVideo } from './video.js';
 import { loadSegmenter } from './game3d.js';
 
-export const VERSION = 'v13 (2026-11-03)';
+export const VERSION = 'v14 (2026-11-03)';
 const MAX_SEC = 180;
 const $ = id => document.getElementById(id);
 const ui = { file: $('file'), work: $('work'), img: $('outImg'), vid: $('outVid'), busy: $('busy'), busyText: $('busyText'), busySub: $('busySub'),

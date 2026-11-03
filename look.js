@@ -6,6 +6,7 @@ import { Game3D } from './game3d.js';
 
 export const W = 1080, H = 1920, FW = 1080, FR = 64, BAND_H = 260;   // v12：角丸を大きく（v9＝44）
 // v8：VHS は中央の窓。横の写真・動画＝横長 4:3（1080×810・y555〜）、縦＝縦長 3:4（1080×1440・y240〜）。sd＝窓の中で落とす大きさ。ロゴと日時は窓の上の帯（高さ260）
+export const OUT720 = [720, 1280];   // v14：仕上げに 720p まで落として戻す（ロゴと日時も含めて）
 export const WIN = { land: { fh: 810, fy: 555, sd: [240, 180] }, port: { fh: 1440, fy: 240, sd: [240, 320] } };   // v11：映像を少しだけ上げた（v9＝200×150・200×267）
 export const P = {
   hsoft: 0.40, sharp: [5, 2.0], chromaDiv: 16, cbDx: 14, crDx: 18, sat: 0.86,   // v8：彩度 0.86（v7＝0.92）。落とす大きさは WIN の sd（v7＝9:16 全面で 200×356）
@@ -223,7 +224,7 @@ export class Look {
     this.prog = {}; for (const k in FS) this.prog[k] = this._compile(FS[k]);
     const T = (w, h) => this._tex(w, h);
     this.t = { pre: T(...PRE), preH: T(...PRE), preL: T(...PRE), sdL: T(...WIN.land.sd), hsL: T(HS, WIN.land.sd[1]), sbL: T(...WIN.land.sd), sdP: T(...WIN.port.sd), hsP: T(HS, WIN.port.sd[1]), sbP: T(...WIN.port.sd), up: T(W, H), bh: T(W, H), sh: T(W, H),
-               ch: T(CW, H), gr: T(W, H), g4: T(GW, GH), gb1: T(GW, GH), gb2: T(GW, GH), ov: T(W, BAND_H),
+               ch: T(CW, H), gr: T(W, H), g4: T(GW, GH), gb1: T(GW, GH), gb2: T(GW, GH), ov: T(W, BAND_H), fin: T(W, H), dn: T(...OUT720),
                ds: T(...DOT.size), dg: T(...DOT.size), dq: T(...DOT.size), card: T(...DOT.size), gms: T(...GMS), gan: T(...GAN), ovF: T(W, H) };
     this.f = {}; for (const k in this.t) if (!['pre', 'ov', 'card', 'ovF'].includes(k)) this.f[k] = this._fbo(this.t[k]);
     this.keys = {};
@@ -338,10 +339,12 @@ precision highp float; flat in vec3 vc; out vec4 o; void main() { o = vec4(vc, 1
     this._blur('gb1', 'gb2', GW, GH, this.k6, [0, 1]);
     if (o.overlay) this._upload(o.overlay.key, 'ov', W, BAND_H, o.overlay.data);
     const r = rng(o.seed), jit = o.jitter ? [randint(r, -2, 2), randint(r, -2, 2)] : [0, 0];
-    this._pass('final', null, { g: 'gr', gw: 'gb2', ov: 'ov' }, {
+    this._pass('final', 'fin', { g: 'gr', gw: 'gb2', ov: 'ov' }, {
       jit: ['2i', ...jit], hdx: ['1i', P.head[1] + randint(r, -8, 8)], seed: ['1ui', o.seed >>> 0],
       thr: ['1f', P.glow[1]], gain: ['1f', P.glow[2]], tint: ['3f', ...P.glowTint], nS: ['1f', P.noise], gS: ['1f', P.grain],
       hh: ['1i', P.head[0]], hn: ['1i', P.head[2]], useOv: ['1i', o.overlay ? 1 : 0], knee: ['2f', ...P.knee], fy: ['1i', wn.fy], fh: ['1i', wn.fh] });
+    this._pass('boxdown', 'dn', { t: 'fin' }, { src: ['2f', W, H], dst: ['2f', ...OUT720] });        // v14：720p へ（面積の平均）
+    this._pass('bicubic', null, { t: 'dn' }, { src: ['2f', ...OUT720], dst: ['2f', W, H] });       // → 1080×1920 に戻す
   }
 
   _dot(s0, o) {

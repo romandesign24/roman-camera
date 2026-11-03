@@ -2,6 +2,7 @@
 // ロゴと日時のグリッチは4コマごとに崩れ方が変わり、2〜3.5秒に一度2コマ大きく乱れる（look_reference_video.py と同じ）。
 import { demux, mux, Reader } from './mp4.js';
 import { osdLines, rng } from './look.js';
+import { vhsAudio } from './vhsaudio.js';
 
 export const canConvertVideo = () => typeof VideoDecoder !== 'undefined' && typeof VideoEncoder !== 'undefined';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -102,6 +103,7 @@ export async function convertVideo(file, look, overlay, { probe, date, mode = 'v
       samples.push({ data: new Uint8Array(await file.slice(A.offs[k], A.offs[k] + A.sizes[k]).arrayBuffer()), dur: A.durs[k] });
     }
     if (samples.length) audio = { ts: a.ts, rate: a.rate, ch: a.ch, asc: a.asc, samples, mediaTime, emptySec, segSec: Math.max(0, vSec - emptySec) };
+    if (audio && mode === 'vhs') audio = (await vhsAudio(audio, 7)) || audio;   // v13：VHS は音質を落としてテープの音を薄く（対応していない端末は元の音のまま）
   }
   return mux({ video: { width: 1080, height: 1920, ts, avcC, samples: vs, shift: D }, audio });
 }

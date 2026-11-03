@@ -4,15 +4,17 @@ import { Game3D } from './game3d.js';
 // ・dot  … ドット絵（look_pixel_reference.py）：180×320ドット・写真ごとの24色・格子のディザ・ポストカード風ラベル
 // ・game … PS1 のゲーム風（参考：jongmin.design・maddenmedia）：人を切り抜いて PS1 風の 3D の秋の公園に立たせる（game3d.js）
 
-export const W = 1080, H = 1920, FW = 1080, FR = 44, BAND_H = 260;
+export const W = 1080, H = 1920, FW = 1080, FR = 64, BAND_H = 260;   // v12：角丸を大きく（v9＝44）
 // v8：VHS は中央の窓。横の写真・動画＝横長 4:3（1080×810・y555〜）、縦＝縦長 3:4（1080×1440・y240〜）。sd＝窓の中で落とす大きさ。ロゴと日時は窓の上の帯（高さ260）
-export const WIN = { land: { fh: 810, fy: 555, sd: [200, 150] }, port: { fh: 1440, fy: 240, sd: [200, 267] } };
+export const WIN = { land: { fh: 810, fy: 555, sd: [240, 180] }, port: { fh: 1440, fy: 240, sd: [240, 320] } };   // v11：映像を少しだけ上げた（v9＝200×150・200×267）
 export const P = {
   hsoft: 0.40, sharp: [5, 2.0], chromaDiv: 16, cbDx: 14, crDx: 18, sat: 0.86,   // v8：彩度 0.86（v7＝0.92）。落とす大きさは WIN の sd（v7＝9:16 全面で 200×356）
   lift: [[16, 0.92], [11, 0.92], [6, 0.86]], glow: [24, 140, 1.8], glowTint: [150, 120, 110],     // v8：暖かく褪せた色（赤を浮かせ青を抑える。v7＝8/9/14・150・1.6）
   knee: [165, 226],                                                                             // ハイライトを寝かせる（v7＝170・228）
-  noise: 18, grain: 5, head: [90, 40, 36],    // v8：粒子とノイズを弱め、窓の大きさで付ける（v7＝30・10）。head は引き伸ばした 1920 の中の値
-  lens: [0.22, 0.006, 0.30],                  // v6：若干の魚眼（樽型）・周辺の色ずれ・周辺減光（インスタの参考＝VX1000系）
+  noise: 18, grain: 8,   // v11：粒子を少し足した（v9＝5）
+  head: [0, 0, 0],   // v12：下部のザラザラ（ヘッド切替ノイズ）を無くした（v9＝90・40・36）
+     // v8：粒子とノイズを弱め、窓の大きさで付ける（v7＝30・10）。head は引き伸ばした 1920 の中の値
+  lens: [0.38, 0.008, 0.32],                  // v11：魚眼を強めた（v9＝0.22・0.006・0.30）。v6：若干の魚眼（樽型）・周辺の色ずれ・周辺減光（インスタの参考＝VX1000系）
 };
 // ドット絵（look_pixel_reference.py と同じ）
 export const DOT = { size: [180, 320], colors: 24, sat: 1.15, spread: 0.05, dusk: 0.22 };
@@ -20,7 +22,7 @@ const DK = W / DOT.size[0];   // 6：1ドット＝6px
 // 文字（ロゴ・日時）のグリッチ。v6 で弱めた（look_reference.py の G と同じ）
 // v8：ロゴと日時のグリッチは無し（帯のずれ・走査線・色ずれを0に）。画質を落とす（osdLowres）だけ残す
 export const G = { logoBands: [0, 0], logoShift: [0, 0], logoScan: 255, logoRgb: 0,
-                   osdBands: [0, 0], osdShift: [0, 0], osdScan: 255, osdRgb: 0, osdLowres: [0.6, 0.8, 1.6], burst: 1.6 };
+                   osdBands: [0, 0], osdShift: [0, 0], osdScan: 255, osdRgb: 0, osdLowres: [0.42, 1.3, 2.0], logoLowres: [0.42, 1.3], burst: 1.6 };   // v11：ロゴと日時の画質を落とした（v9＝日時だけ 0.6・0.8・1.6）
 const PRE = [480, 852];   // まず 480×852 へ（2D canvas で回転・切り出し）→ 面積の平均で各モードの大きさへ
 const GMS = [270, 480];                                  // ゲーム：PS1 くらいの粗さで三角形を描く（1ドット＝4px）
 const GAN = [135, 240];                                  // ゲーム：輪郭を探す大きさ
@@ -191,7 +193,9 @@ void main() { int x = int(gl_FragCoord.x), Y = ${H - 1} - int(gl_FragCoord.y); v
   float gr = mix(mix(nz(g0.x, g0.y, 3u, gS), nz(g1.x, g0.y, 3u, gS), gf.x), mix(nz(g0.x, g1.y, 3u, gS), nz(g1.x, g1.y, 3u, gS), gf.x), gf.y);
   v = min(vec3(255.0), v + max(0.0, floor(gr + 0.5) - 128.0));
   float hf = float(fh) * 0.5; vec2 p = vec2(float(x), float(Y - fy)) + 0.5, e = max(abs(p - vec2(${FW / 2}.0, hf)) - vec2(${FW / 2 - FR}.0, hf - ${FR}.0), 0.0);
-  v = floor(v * (1.0 - smoothstep(${FR}.0 - 1.5, ${FR}.0 + 1.5, length(e))) + 0.5);   // 四隅を丸く
+  float dd = ${FR}.0 - length(e), rim = dd < 1.0 ? 1.0 : clamp(1.0 - (dd - 1.0) / 3.0, 0.0, 1.0);   // dd＝ふちからの距離（内側が＋）
+  vec3 rc = mix(v, vec3(232.0, 224.0, 210.0), 0.25);   // ふちの線の色＝その場の映像に暖かい明るい色を 25% 混ぜる（v12b＝55%）（映像に馴染む。v12 初版は #f7f7f7）
+  v = floor(mix(v, rc, rim) * clamp(dd, 0.0, 1.0) + 0.5);   // v12：外側から 1px の線 → 3px で映像へぼかす・四隅は丸く
   if (useOv == 1 && Y >= fy && Y < fy + ${BAND_H}) { vec4 c = texelFetch(ov, ivec2(x, Y - fy), 0); v = v * (1.0 - c.a) + c.rgb * 255.0 * c.a; }
   o = vec4(v / 255.0, 1.0); }`,
 };
@@ -554,6 +558,9 @@ export class Overlay {
     const c = document.createElement('canvas'); c.width = w; c.height = h;
     const x = c.getContext('2d', { willReadFrequently: true }); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high'; x.drawImage(vhsLogoImg, 0, 0, w, h);
     const d = x.getImageData(0, 0, w, h).data; this.logo = new Gray(w, h); for (let i = 0; i < w * h; i++) this.logo.d[i] = d[i * 4 + 3];
+    { const dw = vhsLogoImg.width, dh = vhsLogoImg.height, c2 = document.createElement('canvas'); c2.width = dw; c2.height = dh;   // v12：ドットのロゴ（等倍で読む）
+      const x2 = c2.getContext('2d', { willReadFrequently: true }); x2.drawImage(vhsLogoImg, 0, 0); const a = x2.getImageData(0, 0, dw, dh).data;
+      this.dots = new Gray(dw, dh); for (let i = 0; i < dw * dh; i++) this.dots.d[i] = a[i * 4 + 3]; }
     this.cache = new Map(); this.img = logoImg;
   }
 
@@ -614,7 +621,7 @@ export class Overlay {
   _logo(seed, burst) {   // 横に裂けてずれる帯・3行おきの走査線の抜け・赤を右／青を左へ
     const r = rng(seed), s = burst ? G.burst : 1, pad = 40, L = this.logo, w = L.w + 2 * pad, h = L.h;
     const A = new Gray(w, h); for (let y = 0; y < h; y++) A.d.set(L.d.subarray(y * L.w, (y + 1) * L.w), y * w + pad);
-    const out = applyBands(A, mkBands(r, h, s, ...G.logoBands, ...G.logoShift)); scan(out, G.logoScan);
+    const out = lowres(applyBands(A, mkBands(r, h, s, ...G.logoBands, ...G.logoShift)), ...G.logoLowres); scan(out, G.logoScan);
     const off = Math.trunc(G.logoRgb * s), R = shiftX(out, off), B = shiftX(out, -off), Ly = new Layer(w, h);
     for (let i = 0; i < w * h; i++) { Ly.r[i] = R.d[i]; Ly.g[i] = out.d[i]; Ly.b[i] = B.d[i]; Ly.a[i] = Math.floor(Math.max(R.d[i], out.d[i], B.d[i]) * 0.95); }
     return Ly;
@@ -628,6 +635,11 @@ export class Overlay {
       [...t].forEach((ch, i) => (G5x7[ch] || G5x7[' ']).forEach((row, ry) => [...row].forEach((c, rx) => {
         if (c !== '1') return; const X = x0 + i * 6 * px + rx * px, Y = y0 + ry * px;
         for (let yy = Y; yy < Y + px; yy++) text.d.fill(255, yy * w + X, yy * w + X + px); }))); });
+    return { x: W - 72 - tw - pad, y: 58, ...this._dots(text, r, s) };   // 窓の右上から 右72・上58
+  }
+
+  _dots(text, r, s) {   // 白いドット文字に黒い縁を付けて画質を落とす（日時とロゴで共通）
+    const w = text.w, h = text.h;
     let shadow = offsetWrap(maxFilter(text, 3), 3, 3);
     const [k, bt, bs] = G.osdLowres; text = lowres(text, k, bt); shadow = lowres(shadow, k, bs);
     const bands = mkBands(r, h, s, ...G.osdBands, ...G.osdShift); text = applyBands(text, bands); shadow = applyBands(shadow, bands);
@@ -637,14 +649,20 @@ export class Overlay {
       dark.r[i] = 10; dark.g[i] = 10; dark.b[i] = 14; dark.a[i] = Math.floor(shadow.d[i] * 0.85);
       col.r[i] = Math.floor(R.d[i] * 246 / 255); col.g[i] = Math.floor(text.d[i] * 246 / 255); col.b[i] = Math.floor(B.d[i] * 246 / 255);
       col.a[i] = Math.max(R.d[i], text.d[i], B.d[i]); }
-    return { x: W - 72 - tw - pad, y: 58, dark, col };   // v8：窓の右上から 右72・上58   // v8：窓の右上・px 9→6
+    return { dark, col };
+  }
+
+  _logoDots(seed) {   // v12：左上のロゴ＝日時と同じドット（logo_vhs.png の1画素＝1ドット）。窓の左上から 左72・上58
+    const px = 6, pad = 40, L = this.dots, w = L.w * px + 2 * pad, h = L.h * px + 12, text = new Gray(w, h);
+    for (let y = 0; y < L.h; y++) for (let x = 0; x < L.w; x++) if (L.d[y * L.w + x] > 127) {
+      const X = pad + x * px, Y = y * px; for (let yy = Y; yy < Y + px; yy++) text.d.fill(255, yy * w + X, yy * w + X + px); }
+    return { x: 72 - pad, y: 58, ...this._dots(text, rng(seed + 202), 1) };
   }
 
   _make(lines, seed, burst) {
-    const band = new Layer(W, BAND_H), lg = this._logo(seed, burst);
-    over(band, blurLayer(lg, 2.5), 32, 64); over(band, lg, 32, 64);   // 帯（窓の上端から）の中の位置
-    const o = this._osd(lines, seed, burst), oy = o.y;
-    over(band, o.dark, o.x, oy); over(band, blurLayer(o.col, 2), o.x, oy); over(band, o.col, o.x, oy);
+    const band = new Layer(W, BAND_H);
+    for (const o of [this._logoDots(seed), this._osd(lines, seed, burst)]) {   // 帯（窓の上端から）の中の位置
+      over(band, o.dark, o.x, o.y); over(band, blurLayer(o.col, 2), o.x, o.y); over(band, o.col, o.x, o.y); }
     const out = new Uint8ClampedArray(W * BAND_H * 4);
     for (let i = 0; i < W * BAND_H; i++) { out[i * 4] = band.r[i]; out[i * 4 + 1] = band.g[i]; out[i * 4 + 2] = band.b[i]; out[i * 4 + 3] = band.a[i]; }
     return new Uint8Array(out.buffer);

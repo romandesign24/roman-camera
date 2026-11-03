@@ -22,8 +22,9 @@ showMode();
 async function engine() {
   if (look) return;
   look = new Look();
-  const logo = new Image(); logo.src = 'logo_white.png'; await logo.decode();
-  overlay = new Overlay(logo);
+  const logo = new Image(); logo.src = 'logo_white.png'; const vlogo = new Image(); vlogo.src = 'logo_vhs.png';
+  await Promise.all([logo.decode(), vlogo.decode()]);
+  overlay = new Overlay(logo, vlogo);
 }
 
 const pad = n => String(n).padStart(2, '0');

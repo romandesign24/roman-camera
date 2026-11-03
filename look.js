@@ -1,27 +1,30 @@
 import { Game3D } from './game3d.js';
 // 浪漫カメラ：見た目を作る（GPU＝WebGL2）。モードは3つ（代表の参考に合わせた）。数字の正は 見本/ の PIL 版。
-// ・vhs  … VHS風（look_reference.py v6）：若干の魚眼 → 画質を落とす → にじみ・ノイズ → 左上ロゴ＋右上日時（グリッチ）
+// ・vhs  … VHS風（look_reference.py v8）：中央の4:3の窓（四隅を丸く・上下は黒）。4:3 を縦に引き伸ばした 1080×1920 で 若干の魚眼 → 画質を落とす → にじみ・ノイズ → 最後に窓へ縮める。窓の左上ロゴ＋右上日時（グリッチ）
 // ・dot  … ドット絵（look_pixel_reference.py）：180×320ドット・写真ごとの24色・格子のディザ・ポストカード風ラベル
 // ・game … PS1 のゲーム風（参考：jongmin.design・maddenmedia）：人を切り抜いて PS1 風の 3D の秋の公園に立たせる（game3d.js）
 
-export const W = 1080, H = 1920, TOP = 270, BAND_Y = 200, BAND_H = 520;   // ロゴと日時は y200〜720 の帯に入る
+export const W = 1080, H = 1920, FW = 1080, FR = 44, BAND_H = 260;
+// v8：VHS は中央の窓。横の写真・動画＝横長 4:3（1080×810・y555〜）、縦＝縦長 3:4（1080×1440・y240〜）。sd＝窓の中で落とす大きさ。ロゴと日時は窓の上の帯（高さ260）
+export const WIN = { land: { fh: 810, fy: 555, sd: [200, 150] }, port: { fh: 1440, fy: 240, sd: [200, 267] } };
 export const P = {
-  sd: [200, 356], hsoft: 0.40, sharp: [5, 2.0], chromaDiv: 16, cbDx: 14, crDx: 18, sat: 0.92,   // v7：画質をもう一段落とした（v6＝240×426・0.45・2.4・1/14）
-  lift: [[8, 0.95], [9, 0.94], [14, 0.91]], glow: [24, 150, 1.6], glowTint: [150, 120, 110],     // v7：明部のにじみを弱めた（v6＝115・2.2）
-  knee: [170, 228],                                                                             // v7：ハイライトを落とす（170 から上を寝かせ、白は 228 で止める）
-  noise: 30, grain: 10, head: [70, 46, 26],   // v6：粒子とノイズを弱めた（v5＝48・24）・黒を締めて色を少し濃く（v5＝0.80、12/14/24）
+  hsoft: 0.40, sharp: [5, 2.0], chromaDiv: 16, cbDx: 14, crDx: 18, sat: 0.86,   // v8：彩度 0.86（v7＝0.92）。落とす大きさは WIN の sd（v7＝9:16 全面で 200×356）
+  lift: [[16, 0.92], [11, 0.92], [6, 0.86]], glow: [24, 140, 1.8], glowTint: [150, 120, 110],     // v8：暖かく褪せた色（赤を浮かせ青を抑える。v7＝8/9/14・150・1.6）
+  knee: [165, 226],                                                                             // ハイライトを寝かせる（v7＝170・228）
+  noise: 18, grain: 5, head: [90, 40, 36],    // v8：粒子とノイズを弱め、窓の大きさで付ける（v7＝30・10）。head は引き伸ばした 1920 の中の値
   lens: [0.22, 0.006, 0.30],                  // v6：若干の魚眼（樽型）・周辺の色ずれ・周辺減光（インスタの参考＝VX1000系）
 };
 // ドット絵（look_pixel_reference.py と同じ）
 export const DOT = { size: [180, 320], colors: 24, sat: 1.15, spread: 0.05, dusk: 0.22 };
 const DK = W / DOT.size[0];   // 6：1ドット＝6px
 // 文字（ロゴ・日時）のグリッチ。v6 で弱めた（look_reference.py の G と同じ）
-export const G = { logoBands: [2, 4], logoShift: [3, 12], logoScan: 190, logoRgb: 3,
-                   osdBands: [1, 2], osdShift: [2, 6], osdScan: 205, osdRgb: 2, osdLowres: [0.6, 0.8, 1.6], burst: 1.6 };
+// v8：ロゴと日時のグリッチは無し（帯のずれ・走査線・色ずれを0に）。画質を落とす（osdLowres）だけ残す
+export const G = { logoBands: [0, 0], logoShift: [0, 0], logoScan: 255, logoRgb: 0,
+                   osdBands: [0, 0], osdShift: [0, 0], osdScan: 255, osdRgb: 0, osdLowres: [0.6, 0.8, 1.6], burst: 1.6 };
 const PRE = [480, 852];   // まず 480×852 へ（2D canvas で回転・切り出し）→ 面積の平均で各モードの大きさへ
 const GMS = [270, 480];                                  // ゲーム：PS1 くらいの粗さで三角形を描く（1ドット＝4px）
 const GAN = [135, 240];                                  // ゲーム：輪郭を探す大きさ
-const HS = Math.max(2, Math.floor(P.sd[0] * P.hsoft));  // 横だけさらに縮める幅
+const HS = Math.max(2, Math.floor(WIN.land.sd[0] * P.hsoft));  // 横だけさらに縮める幅
 const CW = Math.floor(W / P.chromaDiv);                 // 色のにじみ（横1/16）
 const GW = W / 4, GH = H / 4;                           // 明部のにじみは1/4で計算
 
@@ -164,7 +167,7 @@ void main() { vec2 p = floor(gl_FragCoord.xy) * 4.0; vec2 z = vec2(${W}.0, ${H}.
   o = 0.25 * (texture(g, (p + vec2(1.0, 1.0)) / z) + texture(g, (p + vec2(3.0, 1.0)) / z) + texture(g, (p + vec2(1.0, 3.0)) / z) + texture(g, (p + vec2(3.0, 3.0)) / z)); }`,
   // 仕上げ：明部のにじみ・揺れ（動画）・ヘッド切替ノイズ・横に流れた静止ノイズ・粒子・ロゴと日時
   final: HEAD + `uniform sampler2D g; uniform sampler2D gw; uniform sampler2D ov; uniform ivec2 jit; uniform int hdx; uniform uint seed;
-uniform float thr; uniform float gain; uniform vec3 tint; uniform float nS; uniform float gS; uniform int hh; uniform int hn; uniform int useOv; uniform vec2 knee;
+uniform float thr; uniform float gain; uniform vec3 tint; uniform float nS; uniform float gS; uniform int hh; uniform int hn; uniform int useOv; uniform vec2 knee; uniform int fy; uniform int fh;
 uvec3 pcg(uvec3 v) { v = v * 1664525u + 1013904223u; v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y; v ^= v >> 16u;
   v.x += v.y * v.z; v.y += v.z * v.x; v.z += v.x * v.y; return v; }
 float gauss(int x, int y, uint k) { uvec3 h = pcg(uvec3(uint(x), uint(y), seed * 4u + k));
@@ -174,17 +177,22 @@ vec3 base(int x, int y) { x -= jit.x; y -= jit.y; if (x < 0 || y < 0 || x >= ${W
   vec3 c = texelFetch(g, ivec2(x, y), 0).rgb * 255.0; vec3 b = texture(gw, (vec2(float(x), float(y)) + 0.5) / vec2(${W}.0, ${H}.0)).rgb * 255.0;
   vec3 glw = min(vec3(255.0), floor(max(vec3(0.0), b - thr) * gain)); vec3 v = min(vec3(255.0), c + floor(glw * tint / 255.0));
   vec3 t = floor(knee.x + (knee.y - knee.x) * (1.0 - exp(-(v - knee.x) / (knee.y - knee.x)))); return mix(v, t, step(vec3(knee.x + 0.5), v)); }   // ハイライトを寝かせる
-void main() { int x = int(gl_FragCoord.x), y = ${H - 1} - int(gl_FragCoord.y); vec3 v;
+void main() { int x = int(gl_FragCoord.x), Y = ${H - 1} - int(gl_FragCoord.y); vec3 v;
+  if (Y < fy || Y >= fy + fh) { o = vec4(0.0, 0.0, 0.0, 1.0); return; }        // v8：窓の外は黒
+  int y = (Y - fy) * ${H} / fh;                                                      // 窓の1行 → 引き伸ばした 1920 の1行
   if (y >= ${H} - hh) { int xs = x - hdx; if (xs < 0) xs += ${W}; if (xs >= ${W}) xs -= ${W}; v = base(xs, y); } else v = base(x, y);
   if (y >= ${H} - hn) v = floor(v * 0.4 + nz(x, y, 1u, 80.0) * 0.6 + 0.5);
+  int wy = Y - fy;                                                                     // v8：ノイズと粒子は窓の大きさで付ける（縦に詰まらない）
   float u = (float(x) + 0.5) / 3.0 - 0.5; int i0 = int(floor(u)); float f = u - float(i0);
-  float n = floor(mix(nz(clamp(i0, 0, ${W / 3 - 1}), y, 2u, nS), nz(clamp(i0 + 1, 0, ${W / 3 - 1}), y, 2u, nS), f) + 0.5);
+  float n = floor(mix(nz(clamp(i0, 0, ${W / 3 - 1}), wy, 2u, nS), nz(clamp(i0 + 1, 0, ${W / 3 - 1}), wy, 2u, nS), f) + 0.5);
   v = floor(v * (255.0 - max(0.0, n - 145.0) * 2.0) / 255.0);
-  vec2 gp = (vec2(float(x), float(y)) + 0.5) / 2.0 - 0.5; ivec2 gi = ivec2(floor(gp)); vec2 gf = gp - vec2(gi);
-  ivec2 g0 = clamp(gi, ivec2(0), ivec2(${W / 2 - 1}, ${H / 2 - 1})), g1 = clamp(gi + 1, ivec2(0), ivec2(${W / 2 - 1}, ${H / 2 - 1}));
+  vec2 gp = (vec2(float(x), float(wy)) + 0.5) / 2.0 - 0.5; ivec2 gi = ivec2(floor(gp)); vec2 gf = gp - vec2(gi);
+  ivec2 g0 = clamp(gi, ivec2(0), ivec2(${W / 2 - 1}, fh / 2 - 1)), g1 = clamp(gi + 1, ivec2(0), ivec2(${W / 2 - 1}, fh / 2 - 1));
   float gr = mix(mix(nz(g0.x, g0.y, 3u, gS), nz(g1.x, g0.y, 3u, gS), gf.x), mix(nz(g0.x, g1.y, 3u, gS), nz(g1.x, g1.y, 3u, gS), gf.x), gf.y);
   v = min(vec3(255.0), v + max(0.0, floor(gr + 0.5) - 128.0));
-  if (useOv == 1 && y >= ${BAND_Y} && y < ${BAND_Y + BAND_H}) { vec4 c = texelFetch(ov, ivec2(x, y - ${BAND_Y}), 0); v = v * (1.0 - c.a) + c.rgb * 255.0 * c.a; }
+  float hf = float(fh) * 0.5; vec2 p = vec2(float(x), float(Y - fy)) + 0.5, e = max(abs(p - vec2(${FW / 2}.0, hf)) - vec2(${FW / 2 - FR}.0, hf - ${FR}.0), 0.0);
+  v = floor(v * (1.0 - smoothstep(${FR}.0 - 1.5, ${FR}.0 + 1.5, length(e))) + 0.5);   // 四隅を丸く
+  if (useOv == 1 && Y >= fy && Y < fy + ${BAND_H}) { vec4 c = texelFetch(ov, ivec2(x, Y - fy), 0); v = v * (1.0 - c.a) + c.rgb * 255.0 * c.a; }
   o = vec4(v / 255.0, 1.0); }`,
 };
 
@@ -210,7 +218,7 @@ export class Look {
     gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     this.prog = {}; for (const k in FS) this.prog[k] = this._compile(FS[k]);
     const T = (w, h) => this._tex(w, h);
-    this.t = { pre: T(...PRE), preH: T(...PRE), preL: T(...PRE), sd: T(...P.sd), hs: T(HS, P.sd[1]), sb: T(...P.sd), up: T(W, H), bh: T(W, H), sh: T(W, H),
+    this.t = { pre: T(...PRE), preH: T(...PRE), preL: T(...PRE), sdL: T(...WIN.land.sd), hsL: T(HS, WIN.land.sd[1]), sbL: T(...WIN.land.sd), sdP: T(...WIN.port.sd), hsP: T(HS, WIN.port.sd[1]), sbP: T(...WIN.port.sd), up: T(W, H), bh: T(W, H), sh: T(W, H),
                ch: T(CW, H), gr: T(W, H), g4: T(GW, GH), gb1: T(GW, GH), gb2: T(GW, GH), ov: T(W, BAND_H),
                ds: T(...DOT.size), dg: T(...DOT.size), dq: T(...DOT.size), card: T(...DOT.size), gms: T(...GMS), gan: T(...GAN), ovF: T(W, H) };
     this.f = {}; for (const k in this.t) if (!['pre', 'ov', 'card', 'ovF'].includes(k)) this.f[k] = this._fbo(this.t[k]);
@@ -288,10 +296,13 @@ precision highp float; flat in vec3 vc; out vec4 o; void main() { o = vec4(vc, 1
   render(src, sw, sh, rot, o) {
     const gl = this.gl, px = this.px;
     // 1) 縦9:16の中央を切り出して 480×852 へ（回転もここで）
-    const dw = rot % 180 ? sh : sw, dh = rot % 180 ? sw : sh, k = Math.max(PRE[0] / dw, PRE[1] / dh);
+    //    VHS（v8）だけは中央の 4:3 を切り出して縦に引き伸ばす（あとで窓へ縮める）
+    const dw = rot % 180 ? sh : sw, dh = rot % 180 ? sw : sh, v8 = o.mode !== 'dot' && o.mode !== 'game';
+    this.win = dw > dh ? 'land' : 'port';                        // 横長なら 4:3、縦長（と正方形）なら 3:4
+    const bh = v8 ? PRE[0] * WIN[this.win].fh / FW : PRE[1], k = Math.max(PRE[0] / dw, bh / dh);
     px.setTransform(1, 0, 0, 1, 0, 0); px.fillStyle = '#000'; px.fillRect(0, 0, PRE[0], PRE[1]);
     px.imageSmoothingEnabled = true; px.imageSmoothingQuality = 'high';
-    px.translate(PRE[0] / 2, PRE[1] / 2); px.rotate(rot * Math.PI / 180); px.scale(k, k);
+    px.translate(PRE[0] / 2, PRE[1] / 2); px.scale(1, PRE[1] / bh); px.rotate(rot * Math.PI / 180); px.scale(k, k);
     px.drawImage(src, -sw / 2, -sh / 2, sw, sh); px.setTransform(1, 0, 0, 1, 0, 0);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.t.pre);
@@ -306,10 +317,11 @@ precision highp float; flat in vec3 vc; out vec4 o; void main() { o = vec4(vc, 1
   _vhs(s0, o) {
     // 若干の魚眼 → 画質を落とす：SD → 横だけさらに縮めて戻す → 1080×1920 → 強いシャープ
     this._pass('lens', 'preL', { t: s0 }, { size: ['2f', ...PRE], k: ['1f', P.lens[0]], ca: ['1f', P.lens[1]], vig: ['1f', P.lens[2]] });
-    this._pass('boxdown', 'sd', { t: 'preL' }, { src: ['2f', ...PRE], dst: ['2f', ...P.sd] });
-    this._pass('tri', 'hs', { t: 'sd' }, { sc: ['1f', P.sd[0] / HS], sw: ['1i', P.sd[0]] });
-    this._pass('copy', 'sb', { t: 'hs' }, { size: ['2f', ...P.sd] });
-    this._pass('bicubic', 'up', { t: 'sb' }, { src: ['2f', ...P.sd], dst: ['2f', W, H] });
+    const wn = WIN[this.win], sd = wn.sd, z = this.win === 'land' ? 'L' : 'P';
+    this._pass('boxdown', 'sd' + z, { t: 'preL' }, { src: ['2f', ...PRE], dst: ['2f', ...sd] });
+    this._pass('tri', 'hs' + z, { t: 'sd' + z }, { sc: ['1f', sd[0] / HS], sw: ['1i', sd[0]] });
+    this._pass('copy', 'sb' + z, { t: 'hs' + z }, { size: ['2f', ...sd] });
+    this._pass('bicubic', 'up', { t: 'sb' + z }, { src: ['2f', ...sd], dst: ['2f', W, H] });
     this._blur('up', 'bh', W, H, this.k5, [1, 0]);
     this._blur('bh', 'sh', W, H, this.k5, [0, 1], 'up', P.sharp[1]);
     // 色のにじみ・彩度・暗部の青み
@@ -325,7 +337,7 @@ precision highp float; flat in vec3 vc; out vec4 o; void main() { o = vec4(vc, 1
     this._pass('final', null, { g: 'gr', gw: 'gb2', ov: 'ov' }, {
       jit: ['2i', ...jit], hdx: ['1i', P.head[1] + randint(r, -8, 8)], seed: ['1ui', o.seed >>> 0],
       thr: ['1f', P.glow[1]], gain: ['1f', P.glow[2]], tint: ['3f', ...P.glowTint], nS: ['1f', P.noise], gS: ['1f', P.grain],
-      hh: ['1i', P.head[0]], hn: ['1i', P.head[2]], useOv: ['1i', o.overlay ? 1 : 0], knee: ['2f', ...P.knee] });
+      hh: ['1i', P.head[0]], hn: ['1i', P.head[2]], useOv: ['1i', o.overlay ? 1 : 0], knee: ['2f', ...P.knee], fy: ['1i', wn.fy], fh: ['1i', wn.fh] });
   }
 
   _dot(s0, o) {
@@ -537,10 +549,10 @@ function over(dst, src, ox, oy) {   // PIL の alpha_composite（透過どうし
 }
 
 export class Overlay {
-  constructor(logoImg) {   // logoImg＝logo_white.png（860×270）
-    const w = 330, h = Math.round(logoImg.height * w / logoImg.width);
+  constructor(logoImg, vhsLogoImg = logoImg) {   // logoImg＝logo_white.png（ドット絵・ゲーム）、vhsLogoImg＝logo_vhs.png（v8：凸版文久見出しゴシック EB の「浪漫制作」）
+    const w = 300, h = Math.round(vhsLogoImg.height * w / vhsLogoImg.width);   // v8：VHS のロゴは幅300
     const c = document.createElement('canvas'); c.width = w; c.height = h;
-    const x = c.getContext('2d', { willReadFrequently: true }); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high'; x.drawImage(logoImg, 0, 0, w, h);
+    const x = c.getContext('2d', { willReadFrequently: true }); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high'; x.drawImage(vhsLogoImg, 0, 0, w, h);
     const d = x.getImageData(0, 0, w, h).data; this.logo = new Gray(w, h); for (let i = 0; i < w * h; i++) this.logo.d[i] = d[i * 4 + 3];
     this.cache = new Map(); this.img = logoImg;
   }
@@ -609,10 +621,10 @@ export class Overlay {
   }
 
   _osd(lines, seed, burst) {   // 白いドット文字＋黒い縁。画質を落としてグリッチ（ロゴより弱め）
-    const px = 9, pad = 40, r = rng(seed + 101), s = burst ? G.burst : 1;
-    const tw = Math.max(...lines.map(t => t.length)) * 6 * px, th = 7 * px + 84 * (lines.length - 1), w = tw + 2 * pad, h = th + 12;
+    const px = 6, LS = 56, pad = 40, r = rng(seed + 101), s = burst ? G.burst : 1;
+    const tw = Math.max(...lines.map(t => t.length)) * 6 * px, th = 7 * px + LS * (lines.length - 1), w = tw + 2 * pad, h = th + 12;
     let text = new Gray(w, h);
-    lines.forEach((t, k) => { const x0 = pad + tw - t.length * 6 * px, y0 = k * 84;
+    lines.forEach((t, k) => { const x0 = pad + tw - t.length * 6 * px, y0 = k * LS;
       [...t].forEach((ch, i) => (G5x7[ch] || G5x7[' ']).forEach((row, ry) => [...row].forEach((c, rx) => {
         if (c !== '1') return; const X = x0 + i * 6 * px + rx * px, Y = y0 + ry * px;
         for (let yy = Y; yy < Y + px; yy++) text.d.fill(255, yy * w + X, yy * w + X + px); }))); });
@@ -625,13 +637,13 @@ export class Overlay {
       dark.r[i] = 10; dark.g[i] = 10; dark.b[i] = 14; dark.a[i] = Math.floor(shadow.d[i] * 0.85);
       col.r[i] = Math.floor(R.d[i] * 246 / 255); col.g[i] = Math.floor(text.d[i] * 246 / 255); col.b[i] = Math.floor(B.d[i] * 246 / 255);
       col.a[i] = Math.max(R.d[i], text.d[i], B.d[i]); }
-    return { x: W - 60 - tw - pad, y: TOP + 8, dark, col };
+    return { x: W - 72 - tw - pad, y: 58, dark, col };   // v8：窓の右上から 右72・上58   // v8：窓の右上・px 9→6
   }
 
   _make(lines, seed, burst) {
     const band = new Layer(W, BAND_H), lg = this._logo(seed, burst);
-    over(band, blurLayer(lg, 2.5), 20, TOP - BAND_Y); over(band, lg, 20, TOP - BAND_Y);
-    const o = this._osd(lines, seed, burst), oy = o.y - BAND_Y;
+    over(band, blurLayer(lg, 2.5), 32, 64); over(band, lg, 32, 64);   // 帯（窓の上端から）の中の位置
+    const o = this._osd(lines, seed, burst), oy = o.y;
     over(band, o.dark, o.x, oy); over(band, blurLayer(o.col, 2), o.x, oy); over(band, o.col, o.x, oy);
     const out = new Uint8ClampedArray(W * BAND_H * 4);
     for (let i = 0; i < W * BAND_H; i++) { out[i * 4] = band.r[i]; out[i * 4 + 1] = band.g[i]; out[i * 4 + 2] = band.b[i]; out[i * 4 + 3] = band.a[i]; }

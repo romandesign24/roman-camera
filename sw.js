@@ -1,6 +1,6 @@
 // 浪漫カメラ：ホーム画面から電波なしでも開けるように、アプリ本体をまるごと端末に置いておく。
 // 中身を変えたら V を上げる（次に開いたとき新しい版に入れ替わる）。
-const V = 'roman-camera-v14';
+const V = 'roman-camera-v15';
 const FILES = ['./', 'index.html', 'app.js', 'look.js', 'mp4.js', 'video.js', 'vhsaudio.js', 'exif.js', 'game3d.js', 'logo_white.png', 'logo_vhs.png', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'manifest.webmanifest'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(V).then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' })))).then(() => self.skipWaiting()));

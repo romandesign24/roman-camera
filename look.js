@@ -194,9 +194,9 @@ void main() { int x = int(gl_FragCoord.x), Y = ${H - 1} - int(gl_FragCoord.y); v
   float gr = mix(mix(nz(g0.x, g0.y, 3u, gS), nz(g1.x, g0.y, 3u, gS), gf.x), mix(nz(g0.x, g1.y, 3u, gS), nz(g1.x, g1.y, 3u, gS), gf.x), gf.y);
   v = min(vec3(255.0), v + max(0.0, floor(gr + 0.5) - 128.0));
   float hf = float(fh) * 0.5; vec2 p = vec2(float(x), float(Y - fy)) + 0.5, e = max(abs(p - vec2(${FW / 2}.0, hf)) - vec2(${FW / 2 - FR}.0, hf - ${FR}.0), 0.0);
-  float dd = ${FR}.0 - length(e), rim = dd < 1.0 ? 1.0 : clamp(1.0 - (dd - 1.0) / 3.0, 0.0, 1.0);   // dd＝ふちからの距離（内側が＋）
+  float dd = ${FR}.0 - length(e), rim = dd < 1.0 ? 1.0 : clamp(1.0 - (dd - 1.0) / 6.0, 0.0, 1.0);   // v15：ぼかし 3px→6px   // dd＝ふちからの距離（内側が＋）
   vec3 rc = mix(v, vec3(232.0, 224.0, 210.0), 0.25);   // ふちの線の色＝その場の映像に暖かい明るい色を 25% 混ぜる（v12b＝55%）（映像に馴染む。v12 初版は #f7f7f7）
-  v = floor(mix(v, rc, rim) * clamp(dd, 0.0, 1.0) + 0.5);   // v12：外側から 1px の線 → 3px で映像へぼかす・四隅は丸く
+  v = floor(mix(v, rc, rim) * clamp(dd, 0.0, 1.0) + 0.5);   // v12：外側から 1px の線 → 6px（v15）で映像へぼかす・四隅は丸く
   if (useOv == 1 && Y >= fy && Y < fy + ${BAND_H}) { vec4 c = texelFetch(ov, ivec2(x, Y - fy), 0); v = v * (1.0 - c.a) + c.rgb * 255.0 * c.a; }
   o = vec4(v / 255.0, 1.0); }`,
 };

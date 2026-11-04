@@ -10,8 +10,9 @@ export const OUT720 = [720, 1280];   // v14：仕上げに 720p まで落とし�
 export const WIN = { land: { fh: 810, fy: 555, sd: [240, 180] }, port: { fh: 1440, fy: 240, sd: [240, 320] } };   // v11：映像を少しだけ上げた（v9＝200×150・200×267）
 export const P = {
   hsoft: 0.40, sharp: [5, 2.0], chromaDiv: 16, cbDx: 14, crDx: 18, sat: 0.86,   // v8：彩度 0.86（v7＝0.92）。落とす大きさは WIN の sd（v7＝9:16 全面で 200×356）
-  lift: [[16, 0.92], [11, 0.92], [6, 0.86]], glow: [24, 140, 1.8], glowTint: [150, 120, 110],     // v8：暖かく褪せた色（赤を浮かせ青を抑える。v7＝8/9/14・150・1.6）
-  knee: [165, 226],                                                                             // ハイライトを寝かせる（v7＝170・228）
+  curve: 0.8, lift: [[6, 0.96], [4, 0.96], [1, 0.91]],   // v16：コントラスト強め（S字0.8・黒を沈める。v8＝16/11/6・0.92/0.92/0.86）
+  glow: [24, 140, 1.8], glowTint: [150, 120, 110],     // v8：暖かく褪せた色（赤を浮かせ青を抑える。v7＝8/9/14・150・1.6）
+  knee: [180, 242],   // v16（v8＝165・226）                                                                             // ハイライトを寝かせる（v7＝170・228）
   noise: 18, grain: 8,   // v11：粒子を少し足した（v9＝5）
   head: [0, 0, 0],   // v12：下部のザラザラ（ヘッド切替ノイズ）を無くした（v9＝90・40・36）
      // v8：粒子とノイズを弱め、窓の大きさで付ける（v7＝30・10）。head は引き伸ばした 1920 の中の値
@@ -155,7 +156,7 @@ void main() { ivec2 q = ivec2(gl_FragCoord.xy); float cx = (float(q.x) + 0.5) * 
     acc += w * cbcr(texelFetch(s, ivec2(x, q.y), 0).rgb); ws += w; }
   o = vec4(acc / max(ws, 1e-6), 0.0, 1.0); }`,
   // 明るさはそのまま、色はにじませて右へずらす → 彩度 → 黒を浮かせて暗部を青く
-  grade: HEAD + `uniform sampler2D s; uniform sampler2D ch; uniform float cbDx; uniform float crDx; uniform float sat; uniform vec3 la; uniform vec3 lb;
+  grade: HEAD + `uniform sampler2D s; uniform sampler2D ch; uniform float cbDx; uniform float crDx; uniform float sat; uniform float curve; uniform vec3 la; uniform vec3 lb;
 void main() { ivec2 q = ivec2(gl_FragCoord.xy); vec3 c = texelFetch(s, q, 0).rgb * 255.0;
   float Y = dot(c, vec3(0.299, 0.587, 0.114)); float x = float(q.x); float yv = (float(q.y) + 0.5) / ${H}.0;
   float xb = x >= cbDx ? x - cbDx : x; float xr = x >= crDx ? x - crDx : x;
@@ -163,6 +164,7 @@ void main() { ivec2 q = ivec2(gl_FragCoord.xy); vec3 c = texelFetch(s, q, 0).rgb
   float Cr = texture(ch, vec2((xr + 0.5) / ${W}.0, yv)).g * 255.0 - 128.0;
   vec3 rgb = clamp(floor(vec3(Y + 1.402 * Cr, Y - 0.344136 * Cb - 0.714136 * Cr, Y + 1.772 * Cb) + 0.5), 0.0, 255.0);
   float L = dot(rgb, vec3(0.299, 0.587, 0.114)); rgb = clamp(floor(L + sat * (rgb - L) + 0.5), 0.0, 255.0);
+  vec3 u = rgb / 255.0; rgb = floor(rgb + curve * (255.0 * u * u * (3.0 - 2.0 * u) - rgb) + 0.5);   // v16：コントラストの S 字
   rgb = min(vec3(255.0), floor(la + rgb * lb)); o = vec4(rgb / 255.0, 1.0); }`,
   // 1/4 に縮める（4×4平均）
   box4: HEAD + `uniform sampler2D g;
@@ -331,7 +333,7 @@ precision highp float; flat in vec3 vc; out vec4 o; void main() { o = vec4(vc, 1
     this._blur('bh', 'sh', W, H, this.k5, [0, 1], 'up', P.sharp[1]);
     // 色のにじみ・彩度・暗部の青み
     this._pass('chroma', 'ch', { s: 'sh' }, { sc: ['1f', W / CW] });
-    this._pass('grade', 'gr', { s: 'sh', ch: 'ch' }, { cbDx: ['1f', P.cbDx], crDx: ['1f', P.crDx], sat: ['1f', P.sat],
+    this._pass('grade', 'gr', { s: 'sh', ch: 'ch' }, { cbDx: ['1f', P.cbDx], crDx: ['1f', P.crDx], sat: ['1f', P.sat], curve: ['1f', P.curve],
       la: ['3f', ...P.lift.map(v => v[0])], lb: ['3f', ...P.lift.map(v => v[1])] });
     // 明部のにじみ（1/4で半径6＝元の24）
     this._pass('box4', 'g4', { g: 'gr' }, {});
